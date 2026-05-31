@@ -19,6 +19,7 @@ class FiscalEmailProcessor
     private FiscalDocumentRepository $repo;
     private FiscalQueueService $queue;
     private FiscalMailerService $mailer;
+    private FiscalCustomerEmailNormalizer $emailNormalizer;
     private LoggerInterface $logger;
     private string $mailFrom;
 
@@ -27,6 +28,7 @@ class FiscalEmailProcessor
         FiscalDocumentRepository $repo,
         FiscalQueueService $queue,
         FiscalMailerService $mailer,
+        FiscalCustomerEmailNormalizer $emailNormalizer,
         LoggerInterface $logger,
         string $mailFrom = 'noreply@tukifac.com'
     ) {
@@ -34,6 +36,7 @@ class FiscalEmailProcessor
         $this->repo = $repo;
         $this->queue = $queue;
         $this->mailer = $mailer;
+        $this->emailNormalizer = $emailNormalizer;
         $this->logger = $logger;
         $this->mailFrom = $mailFrom;
     }
@@ -45,10 +48,12 @@ class FiscalEmailProcessor
             return;
         }
 
-        $email = $this->resolveEmailFromSnapshot($doc);
-        if ($email === null || $email === '') {
-            $doc->setEmailStatus('skipped');
+        $email = $this->emailNormalizer->forDelivery($this->emailNormalizer->resolveFromDocument($doc));
+        if ($email === null) {
+            $doc->setEmailStatus(FiscalCustomerEmailNormalizer::STATUS_NOT_AVAILABLE);
             $this->em->flush();
+            $this->logger->info('fiscal_email_not_available', ['uuid' => $documentUuid]);
+
             return;
         }
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
@@ -61,6 +66,7 @@ class FiscalEmailProcessor
             $this->em->persist($log);
             $doc->setEmailStatus('invalid');
             $this->em->flush();
+
             return;
         }
 
@@ -81,30 +87,13 @@ class FiscalEmailProcessor
             $doc->setEmailStatus('failed');
             if ($log->getAttempts() < 5) {
                 $this->queue->scheduleRetry($documentUuid, min(3600, 60 * $log->getAttempts()), FiscalQueueService::QUEUE_EMAIL);
-            } elseif (strpos(strtolower($e->getMessage()), 'invalid') !== false) {
+            } elseif (stripos($e->getMessage(), 'invalid') !== false) {
                 $doc->setEmailStatus('invalid');
             }
             $this->logger->error('fiscal_email_failed', ['uuid' => $documentUuid, 'error' => $e->getMessage()]);
         }
 
         $this->em->flush();
-    }
-
-    private function resolveEmailFromSnapshot(FiscalDocument $doc): ?string
-    {
-        if ($doc->getCustomerEmail()) {
-            return trim($doc->getCustomerEmail());
-        }
-        $data = json_decode($doc->getSnapshotJson(), true);
-        if (!is_array($data)) {
-            return null;
-        }
-        foreach (['customer', 'client'] as $key) {
-            if (isset($data[$key]['email']) && is_string($data[$key]['email']) && trim($data[$key]['email']) !== '') {
-                return trim($data[$key]['email']);
-            }
-        }
-        return null;
     }
 
     private function sendMail(FiscalDocument $doc, string $to, OutboundEmailLog $log): void

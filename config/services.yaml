@@ -11,6 +11,7 @@ parameters:
     data_path: '%kernel.project_dir%/data'
     fiscal.storage_path: '%kernel.project_dir%/var/fiscal_storage'
     fiscal.storage_public_url: 'http://localhost:8000/fiscal-files'
+    fiscal.templates_pdf_path: '%kernel.project_dir%/templates/pdf'
     env(validapse_url): 'https://app.validapse.com'
     env(mail_from): 'noreply@tukifac.com'
     env(fiscal_storage_driver): 'local'
@@ -63,11 +64,14 @@ services:
     Greenter\Report\XmlUtils:
         public: true
 
-    Greenter\Report\HtmlReport:
+    App\Report\FiscalHtmlReport:
         arguments:
             - '%env(default::TEMPLATESPDF_PATH)%'
             - cache: '%kernel.cache_dir%'
               strict_variables: true
+
+    Greenter\Report\HtmlReport:
+        alias: App\Report\FiscalHtmlReport
 
     Greenter\Report\PdfReport:
         arguments: ['@App\Service\HtmlReportDecorator']

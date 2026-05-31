@@ -14,11 +14,16 @@ class FiscalBulkActionService
 {
     private FiscalDocumentRepository $repo;
     private FiscalQueueService $queue;
+    private FiscalCustomerEmailNormalizer $emailNormalizer;
 
-    public function __construct(FiscalDocumentRepository $repo, FiscalQueueService $queue)
-    {
+    public function __construct(
+        FiscalDocumentRepository $repo,
+        FiscalQueueService $queue,
+        FiscalCustomerEmailNormalizer $emailNormalizer
+    ) {
         $this->repo = $repo;
         $this->queue = $queue;
+        $this->emailNormalizer = $emailNormalizer;
     }
 
     /**
@@ -102,7 +107,7 @@ class FiscalBulkActionService
         if ($doc->getStatus() === FiscalDocument::STATUS_ACCEPTED && in_array($action, ['send', 'retry'], true)) {
             return true;
         }
-        if ($action === 'email' && $doc->getCustomerEmail() === null) {
+        if ($action === 'email' && !$this->emailNormalizer->isDeliverable($this->emailNormalizer->resolveFromDocument($doc))) {
             return true;
         }
 

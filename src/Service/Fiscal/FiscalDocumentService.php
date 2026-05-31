@@ -24,6 +24,7 @@ class FiscalDocumentService
 
     private EntityManagerInterface $em;
     private FiscalDocumentRepository $repo;
+    private FiscalCustomerEmailNormalizer $emailNormalizer;
     private FiscalQueueService $queue;
     private LoggerInterface $logger;
     private ?FiscalAuditService $audit;
@@ -33,12 +34,14 @@ class FiscalDocumentService
         FiscalDocumentRepository $repo,
         FiscalQueueService $queue,
         LoggerInterface $logger,
+        FiscalCustomerEmailNormalizer $emailNormalizer,
         ?FiscalAuditService $audit = null
     ) {
         $this->em = $em;
         $this->repo = $repo;
         $this->queue = $queue;
         $this->logger = $logger;
+        $this->emailNormalizer = $emailNormalizer;
         $this->audit = $audit;
     }
 
@@ -105,7 +108,7 @@ class FiscalDocumentService
             throw new \InvalidArgumentException('document JSON inválido');
         }
 
-        $customerEmail = $this->extractCustomerEmail($snapshot, $payload);
+        $customerEmail = $this->emailNormalizer->extractForStorage($snapshot, $payload);
 
         $doc = $existing ?? new FiscalDocument();
         if ($existing === null) {
@@ -227,30 +230,6 @@ class FiscalDocumentService
             return $dup;
         }
         throw $e;
-    }
-
-    /**
-     * @param array<string, mixed> $snapshot
-     * @param array<string, mixed> $payload
-     */
-    private function extractCustomerEmail(array $snapshot, array $payload): ?string
-    {
-        if (isset($payload['customer_email']) && is_string($payload['customer_email']) && $payload['customer_email'] !== '') {
-            return $payload['customer_email'];
-        }
-        if (isset($snapshot['customer']) && is_array($snapshot['customer'])) {
-            $email = $snapshot['customer']['email'] ?? null;
-            if (is_string($email) && trim($email) !== '') {
-                return trim($email);
-            }
-        }
-        if (isset($snapshot['client']) && is_array($snapshot['client'])) {
-            $email = $snapshot['client']['email'] ?? null;
-            if (is_string($email) && trim($email) !== '') {
-                return trim($email);
-            }
-        }
-        return null;
     }
 
     private function newUuid(): string
