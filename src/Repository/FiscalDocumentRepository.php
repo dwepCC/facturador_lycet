@@ -337,4 +337,30 @@ class FiscalDocumentRepository extends ServiceEntityRepository
             'created_at' => $last->getCreatedAt()->format(DATE_ATOM),
         ], JSON_THROW_ON_ERROR));
     }
+
+    /**
+     * Documentos en BD marcados como en cola pero sin job Redis efectivo (provider NULL = nunca procesados).
+     *
+     * @return FiscalDocument[]
+     */
+    public function findEmitOrphans(int $limit = 500, int $minAgeSeconds = 120): array
+    {
+        $cutoff = new \DateTimeImmutable(sprintf('-%d seconds', max(0, $minAgeSeconds)));
+
+        return $this->createQueryBuilder('d')
+            ->andWhere('d.provider IS NULL')
+            ->andWhere('d.status IN (:statuses)')
+            ->andWhere('d.createdAt <= :cutoff')
+            ->setParameter('statuses', [
+                FiscalDocument::STATUS_PENDING,
+                FiscalDocument::STATUS_QUEUED,
+                FiscalDocument::STATUS_RETRYING,
+                FiscalDocument::STATUS_SENDING,
+            ])
+            ->setParameter('cutoff', $cutoff)
+            ->orderBy('d.id', 'ASC')
+            ->setMaxResults(max(1, $limit))
+            ->getQuery()
+            ->getResult();
+    }
 }

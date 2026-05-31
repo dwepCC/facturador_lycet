@@ -426,6 +426,18 @@ class FiscalController extends AbstractController
 
         try {
             $this->queue->push($queue, ['document_uuid' => $uuid]);
+            if ($queue === FiscalQueueService::QUEUE_EMIT
+                && in_array($doc->getStatus(), [
+                    FiscalDocument::STATUS_PENDING,
+                    FiscalDocument::STATUS_QUEUED,
+                    FiscalDocument::STATUS_RETRYING,
+                ], true)
+                && $doc->getProvider() === null
+            ) {
+                $doc->setStatus(FiscalDocument::STATUS_QUEUED);
+                $doc->setQueuedAt(new \DateTimeImmutable());
+                $this->repo->getEntityManager()->flush();
+            }
         } catch (\Throwable $e) {
             return new JsonResponse(['error' => $e->getMessage()], Response::HTTP_INTERNAL_SERVER_ERROR);
         }

@@ -69,6 +69,7 @@ class FiscalDocumentService
         $number = (string) ($snapshot['correlativo'] ?? $payload['number'] ?? '');
 
         $fingerprint = FiscalFingerprint::build($tenantId, $docType, $series, $number, $saleId);
+        $automatic = ($payload['automatic_send'] ?? true) !== false;
 
         $existing = $this->repo->findOneBy(['fiscalFingerprint' => $fingerprint]);
         if ($existing !== null) {
@@ -80,7 +81,11 @@ class FiscalDocumentService
                 FiscalDocument::STATUS_SENDING,
                 FiscalDocument::STATUS_SENT,
                 FiscalDocument::STATUS_RETRYING,
+                FiscalDocument::STATUS_PENDING,
             ], true)) {
+                if ($automatic && $this->needsEmitRequeue($existing)) {
+                    $this->requeueEmitJob($existing, $fingerprint, $ruc, 'idempotent_requeue');
+                }
                 return $existing;
             }
         }
@@ -88,6 +93,9 @@ class FiscalDocumentService
         if (!$this->queue->tryClaimEmit($fingerprint, 120)) {
             $locked = $this->repo->findOneBy(['fiscalFingerprint' => $fingerprint]);
             if ($locked !== null) {
+                if ($automatic && $this->needsEmitRequeue($locked)) {
+                    $this->requeueEmitJob($locked, $fingerprint, $ruc, 'claim_requeue');
+                }
                 return $locked;
             }
         }
@@ -107,55 +115,118 @@ class FiscalDocumentService
             $doc->setSaleId($saleId);
             $doc->setFiscalFingerprint($fingerprint);
             $this->em->persist($doc);
-        } elseif ($existing->getStatus() === FiscalDocument::STATUS_ACCEPTED) {
-            return $existing;
         }
 
-        if ($existing === null || $existing->getStatus() !== FiscalDocument::STATUS_ACCEPTED) {
-            $doc->setDocumentType($docType);
-            $doc->setSeries($series);
-            $doc->setNumber($number);
-            $doc->setSnapshotJson($snapshotJson);
-            $doc->setSnapshotVersion(self::SNAPSHOT_VERSION);
-            $doc->setSchemaVersion(self::SCHEMA_VERSION);
-            $doc->setGreenterVersion(self::GREENTER_VERSION);
-            $doc->setCustomerEmail($customerEmail);
-            $doc->setStatus(FiscalDocument::STATUS_QUEUED);
-            $doc->setQueuedAt(new \DateTimeImmutable());
+        $doc->setDocumentType($docType);
+        $doc->setSeries($series);
+        $doc->setNumber($number);
+        $doc->setSnapshotJson($snapshotJson);
+        $doc->setSnapshotVersion(self::SNAPSHOT_VERSION);
+        $doc->setSchemaVersion(self::SCHEMA_VERSION);
+        $doc->setGreenterVersion(self::GREENTER_VERSION);
+        $doc->setCustomerEmail($customerEmail);
+
+        if (!$automatic) {
+            $doc->setStatus(FiscalDocument::STATUS_PENDING);
+            $doc->setQueuedAt(null);
+            try {
+                $this->em->flush();
+            } catch (UniqueConstraintViolationException $e) {
+                return $this->resolveDuplicate($fingerprint, $e);
+            }
+            return $doc;
         }
+
+        // Pendiente hasta confirmar job en Redis (evita huérfanos status=queued sin cola).
+        $doc->setStatus(FiscalDocument::STATUS_PENDING);
+        $doc->setQueuedAt(null);
 
         try {
             $this->em->flush();
         } catch (UniqueConstraintViolationException $e) {
-            $dup = $this->repo->findOneBy(['fiscalFingerprint' => $fingerprint]);
-            if ($dup !== null) {
-                return $dup;
-            }
-            throw $e;
+            return $this->resolveDuplicate($fingerprint, $e);
         }
 
-        $automatic = $payload['automatic_send'] ?? true;
-        if ($automatic !== false) {
-            $this->queue->push(FiscalQueueService::QUEUE_EMIT, [
-                'document_uuid' => $doc->getDocumentUuid(),
-                'fingerprint' => $fingerprint,
-                'ruc' => $ruc,
-            ]);
-            try {
-                if ($this->audit !== null) {
-                    $this->audit->fromDocument($doc, 'fiscal_document_queued', FiscalAuditLog::STATUS_QUEUED, [
-                        'ruc' => $ruc,
-                        'queue_job_id' => $doc->getDocumentUuid(),
-                    ]);
-                }
-            } catch (\Throwable) {
-            }
-        } else {
-            $doc->setStatus(FiscalDocument::STATUS_PENDING);
+        $this->requeueEmitJob($doc, $fingerprint, $ruc, 'initial_enqueue');
+
+        return $doc;
+    }
+
+    /**
+     * Documentos que nunca llegaron a FiscalEmitProcessor (sin provider / sin audit de procesamiento).
+     */
+    public function needsEmitRequeue(FiscalDocument $doc): bool
+    {
+        if ($doc->getProvider() !== null && $doc->getProvider() !== '') {
+            return false;
+        }
+        return in_array($doc->getStatus(), [
+            FiscalDocument::STATUS_PENDING,
+            FiscalDocument::STATUS_QUEUED,
+            FiscalDocument::STATUS_RETRYING,
+            FiscalDocument::STATUS_SENDING,
+        ], true);
+    }
+
+    /**
+     * Encola fiscal:emit y marca queued solo tras push exitoso.
+     */
+    public function requeueEmitJob(FiscalDocument $doc, string $fingerprint, string $ruc, string $reason = 'requeue'): void
+    {
+        if ($fingerprint === '' && $doc->getFiscalFingerprint() !== null) {
+            $fingerprint = (string) $doc->getFiscalFingerprint();
+        }
+        if ($fingerprint === '') {
+            $fingerprint = FiscalFingerprint::build(
+                $doc->getTenantId(),
+                $doc->getDocumentType(),
+                $doc->getSeries(),
+                $doc->getNumber(),
+                $doc->getSaleId()
+            );
+        }
+
+        $this->queue->push(FiscalQueueService::QUEUE_EMIT, [
+            'document_uuid' => $doc->getDocumentUuid(),
+            'fingerprint' => $fingerprint,
+            'ruc' => $ruc,
+            'reason' => $reason,
+        ]);
+
+        if ($doc->getStatus() !== FiscalDocument::STATUS_QUEUED || $doc->getQueuedAt() === null) {
+            $doc->setStatus(FiscalDocument::STATUS_QUEUED);
+            $doc->setQueuedAt(new \DateTimeImmutable());
             $this->em->flush();
         }
 
-        return $doc;
+        $this->auditQueued($doc, $ruc, $reason);
+    }
+
+    private function auditQueued(FiscalDocument $doc, string $ruc, string $reason): void
+    {
+        try {
+            if ($this->audit !== null) {
+                $this->audit->fromDocument($doc, 'fiscal_document_queued', FiscalAuditLog::STATUS_QUEUED, [
+                    'ruc' => $ruc,
+                    'queue_job_id' => $doc->getDocumentUuid(),
+                    'reason' => $reason,
+                ]);
+            }
+        } catch (\Throwable $e) {
+            $this->logger->warning('fiscal_audit_queued_failed', [
+                'document_uuid' => $doc->getDocumentUuid(),
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function resolveDuplicate(string $fingerprint, UniqueConstraintViolationException $e): FiscalDocument
+    {
+        $dup = $this->repo->findOneBy(['fiscalFingerprint' => $fingerprint]);
+        if ($dup !== null) {
+            return $dup;
+        }
+        throw $e;
     }
 
     /**
