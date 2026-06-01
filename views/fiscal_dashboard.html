@@ -293,10 +293,12 @@
       }
     }
 
-    function showPdfInline(){
+    function showPdfInline(refresh){
       if(!selectedUuid)return;
       qs('pdfPreviewWrap').style.display='block';
-      qs('pdfPreview').src=url('/documents/'+selectedUuid+'/download/pdf',{view:'inline'});
+      var params={view:'inline',_:String(Date.now())};
+      if(refresh) params.refresh='1';
+      qs('pdfPreview').src=url('/documents/'+selectedUuid+'/download/pdf',params);
     }
 
     async function generatePdf(){
@@ -307,7 +309,7 @@
         const body=await r.json();
         if(!r.ok) throw new Error(body.error||'Error al generar PDF');
         await detail(selectedUuid);
-        showPdfInline();
+        showPdfInline(true);
       }catch(e){
         alert(e.message||'Error al generar PDF');
       }finally{
@@ -323,14 +325,13 @@
       await loadList();
     }
 
-    function setTodayRange(){
+    function setDefaultDateRange(){
       const now=new Date();
       const y=now.getFullYear();
       const m=String(now.getMonth()+1).padStart(2,'0');
       const d=String(now.getDate()).padStart(2,'0');
-      const today=`${y}-${m}-${d}`;
-      qs('from').value=today;
-      qs('to').value=today;
+      qs('from').value=`${y}-${m}-01`;
+      qs('to').value=`${y}-${m}-${d}`;
     }
 
     qs('btnLoad').onclick=()=>{pageState.offset=0; loadStats(); loadList();};
@@ -346,7 +347,7 @@
     ['btnResend','/send','btnRetry','/retry','btnForce','/force','btnEmail','/email','btnPoll','/poll']
       .reduce((_,v,i,a)=>{if(i%2===0)qs(v).onclick=()=>action(a[i+1]);});
 
-    setTodayRange();
+    setDefaultDateRange();
     loadStats();
     loadList();
     setInterval(()=>{if(!document.hidden){loadStats();loadList();}},30000);

@@ -147,8 +147,12 @@ final class FiscalCustomerEmailNormalizer
             $parameters['system'] = [];
         }
         $logo = $parameters['system']['logo'] ?? null;
+        $hasLogo = $parameters['system']['has_logo'] ?? null;
         if ($logo === null || $logo === '') {
             $parameters['system']['logo'] = self::transparentPngBytes();
+            $parameters['system']['has_logo'] = false;
+        } elseif ($hasLogo === null) {
+            $parameters['system']['has_logo'] = true;
         }
 
         if (!isset($parameters['user']) || !is_array($parameters['user'])) {

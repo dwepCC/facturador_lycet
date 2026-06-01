@@ -204,9 +204,10 @@ class FiscalCompanySyncService
             if ($certPass !== '') {
                 $entry['certificate_password'] = $certPass;
             }
-            if (!empty($payload['logo_base64'])) {
-                $entry['logo_base64'] = (string) $payload['logo_base64'];
-            }
+        }
+
+        if (!empty($payload['logo_base64'])) {
+            $entry['logo_base64'] = (string) $payload['logo_base64'];
         }
 
         foreach (['automatic_send', 'email_enabled', 'retry_enabled', 'enabled'] as $flag) {

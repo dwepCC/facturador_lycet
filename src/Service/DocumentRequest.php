@@ -9,6 +9,7 @@
 namespace App\Service;
 
 use App\Exception\EmpresaNoRegistradaException;
+use App\Service\Fiscal\FiscalLogoResolver;
 use Greenter\Model\DocumentInterface;
 use Greenter\Model\Response\BaseResult;
 use Greenter\Model\Response\BillResult;
@@ -131,14 +132,10 @@ class DocumentRequest implements DocumentRequestInterface
         $params = $this->getKeyContent('parameters');
 
         $company = $document->getCompany();
-        $jsonCompanies = $this->getParameter('companies');
         $ruc = trim((string) $company->getRuc());
-        $companies = !empty($jsonCompanies) ? json_decode($jsonCompanies, true) : null;
-        if (is_array($companies) && array_key_exists($ruc, $companies)) {
-            $logo = $this->getFile($companies[$ruc]['logo']);
-        } else {
-            $logo = $this->getParameter('logo');
-        }
+        /** @var FiscalLogoResolver $logoResolver */
+        $logoResolver = $this->container->get(FiscalLogoResolver::class);
+        $logo = $logoResolver->resolveForRuc($ruc);
 
         try {
             $see = $this->getSee($class, $ruc);
@@ -151,7 +148,8 @@ class DocumentRequest implements DocumentRequestInterface
 
         $parameters = [
             'system' => [
-                'logo' => $params['system']['logo'] ?? $logo,
+                'logo' => $params['system']['logo'] ?? $logo['bytes'],
+                'has_logo' => $params['system']['has_logo'] ?? $logo['has_logo'],
                 'hash' => $this->GetHashFromXml($see->getXmlSigned($document)),
             ],
             'user' => [

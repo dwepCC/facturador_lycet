@@ -179,8 +179,8 @@ class FiscalController extends AbstractController
 
         return new JsonResponse($this->detailService->globalStats(
             $tenantSlug,
-            $fromStr ? new \DateTimeImmutable((string) $fromStr) : null,
-            $toStr ? new \DateTimeImmutable((string) $toStr) : null,
+            $this->parseDateFilter($fromStr, false),
+            $this->parseDateFilter($toStr, true),
             $tenantId !== null && $tenantId !== '' ? (int) $tenantId : null
         ));
     }
@@ -367,7 +367,9 @@ class FiscalController extends AbstractController
         }
 
         if ($type === 'pdf') {
-            $pdfBytes = $this->pdfResolver->resolve($doc, true);
+            $forceRegenerate = $request->query->getBoolean('refresh')
+                || $request->query->getBoolean('regenerate');
+            $pdfBytes = $this->pdfResolver->resolve($doc, true, $forceRegenerate);
             if ($pdfBytes === null || $pdfBytes === '') {
                 return new Response(
                     'PDF no disponible. Compruebe WKHTMLTOPDF_PATH y que el documento tenga XML firmado almacenado.',
@@ -478,8 +480,8 @@ class FiscalController extends AbstractController
             'customer_email' => $this->q($request, 'customer_email'),
             'customer_name' => $this->q($request, 'customer_name'),
             'company_ruc' => $this->q($request, 'company_ruc'),
-            'from' => $fromStr ? new \DateTimeImmutable((string) $fromStr) : null,
-            'to' => $toStr ? new \DateTimeImmutable((string) $toStr) : null,
+            'from' => $this->parseDateFilter($fromStr, false),
+            'to' => $this->parseDateFilter($toStr, true),
             'limit' => min(200, max(1, (int) $request->query->get('limit', 50))),
             'offset' => max(0, (int) $request->query->get('offset', 0)),
             'cursor' => $this->q($request, 'cursor'),
@@ -511,10 +513,10 @@ class FiscalController extends AbstractController
             $out['tenant_id'] = (int) $raw['tenant_id'];
         }
         if (!empty($raw['from'])) {
-            $out['from'] = new \DateTimeImmutable((string) $raw['from']);
+            $out['from'] = $this->parseDateFilter($raw['from'], false);
         }
         if (!empty($raw['to'])) {
-            $out['to'] = new \DateTimeImmutable((string) $raw['to']);
+            $out['to'] = $this->parseDateFilter($raw['to'], true);
         }
         foreach (['errors_only', 'pending_only', 'retry_only', 'email_pending'] as $flag) {
             if (!empty($raw[$flag])) {
@@ -566,7 +568,7 @@ class FiscalController extends AbstractController
         }
         $dt = new \DateTimeImmutable((string) $value);
         if ($endOfDay && !str_contains((string) $value, 'T') && !str_contains((string) $value, ' ')) {
-            $dt = $dt->setTime(23, 59, 59);
+            $dt = $dt->setTime(23, 59, 59, 999999);
         }
 
         return $dt;

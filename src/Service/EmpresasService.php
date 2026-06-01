@@ -217,13 +217,17 @@ class EmpresasService
             }
             if ($logoBase64 !== null && $logoBase64 !== '') {
                 $decoded = self::decodeBase64Content($logoBase64);
-                if ($decoded !== null) {
-                    $logoFile = $ruc . '-logo.png';
-                    $this->ensureDataDirectoryExists();
-                    if (file_put_contents($this->dataPath . DIRECTORY_SEPARATOR . $logoFile, $decoded) !== false) {
-                        $config['logo'] = $logoFile;
-                    }
+                if ($decoded === null || $decoded === '') {
+                    throw new EmpresaDatosInvalidosException($ruc, 'Logo inválido: no se pudo decodificar el base64.');
                 }
+                $logoFile = $ruc . '-logo.png';
+                $this->ensureDataDirectoryExists();
+                $logoPath = $this->dataPath . DIRECTORY_SEPARATOR . $logoFile;
+                if (file_put_contents($logoPath, $decoded) === false) {
+                    throw new EmpresaDatosInvalidosException($ruc, 'No se pudo guardar el archivo de logo en disco.');
+                }
+                $config['logo'] = $logoFile;
+                $this->log('info', 'addOrUpdateEmpresas: logo guardado', ['ruc' => $ruc, 'file' => $logoFile]);
             }
 
             if ($isUpdate) {

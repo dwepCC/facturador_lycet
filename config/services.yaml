@@ -196,6 +196,10 @@ services:
         arguments:
             $dataPath: '%data_path%'
 
+    App\Service\Fiscal\FiscalLogoResolver:
+        arguments:
+            $dataPath: '%data_path%'
+
     App\Service\Fiscal\Provider\ValidaPseProvider: ~
 
     App\Service\Fiscal\Provider\PseAuthBuilder: ~

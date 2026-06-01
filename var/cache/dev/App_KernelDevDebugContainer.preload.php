@@ -10,7 +10,7 @@ if (in_array(PHP_SAPI, ['cli', 'phpdbg'], true)) {
 }
 
 require dirname(__DIR__, 3).''.\DIRECTORY_SEPARATOR.'vendor/autoload.php';
-(require __DIR__.'/App_KernelDevDebugContainer.php')->set(\ContainerGxT5Ds1\App_KernelDevDebugContainer::class, null);
+(require __DIR__.'/App_KernelDevDebugContainer.php')->set(\ContainerS7xCTjl\App_KernelDevDebugContainer::class, null);
 
 $classes = [];
 $classes[] = 'Symfony\Bundle\FrameworkBundle\FrameworkBundle';
@@ -69,6 +69,7 @@ $classes[] = 'App\Service\FileDataReader';
 $classes[] = 'App\Service\Fiscal\FiscalBulkActionService';
 $classes[] = 'App\Service\Fiscal\FiscalCompanySyncService';
 $classes[] = 'App\Service\Fiscal\FiscalConnectionTestService';
+$classes[] = 'App\Service\Fiscal\FiscalCustomerEmailNormalizer';
 $classes[] = 'App\Service\Fiscal\FiscalDocumentDetailService';
 $classes[] = 'App\Service\Fiscal\FiscalDocumentPdfResolver';
 $classes[] = 'App\Service\Fiscal\FiscalDocumentService';
@@ -80,6 +81,7 @@ $classes[] = 'Symfony\Component\Mailer\Transport';
 $classes[] = 'App\Service\Fiscal\FiscalEmitProcessor';
 $classes[] = 'App\Service\Fiscal\FiscalFileFetcher';
 $classes[] = 'App\Service\Fiscal\FiscalPdfService';
+$classes[] = 'App\Service\Fiscal\FiscalLogoResolver';
 $classes[] = 'App\Service\Fiscal\FiscalQueueService';
 $classes[] = 'App\Service\Fiscal\FiscalJobDispatcher';
 $classes[] = 'App\Service\Fiscal\FiscalStatusPollProcessor';
@@ -101,7 +103,7 @@ $classes[] = 'App\Service\Fiscal\Provider\PseAuthBuilder';
 $classes[] = 'App\Service\Fiscal\Provider\SunatDirectProvider';
 $classes[] = 'App\Service\PdfReportDecorator';
 $classes[] = 'App\Service\HtmlReportDecorator';
-$classes[] = 'Greenter\Report\HtmlReport';
+$classes[] = 'App\Report\FiscalHtmlReport';
 $classes[] = 'App\Service\SeeApiFactory';
 $classes[] = 'App\Service\SeeFactory';
 $classes[] = 'Greenter\Api';

@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace App\Service\Fiscal;
 
-use App\Service\ConfigProviderInterface;
-use App\Service\FileDataReader;
 use App\Service\SeeFactory;
 use Greenter\Model\DocumentInterface;
 use Greenter\Report\ReportInterface;
@@ -19,21 +17,18 @@ class FiscalPdfService
 {
     private ReportInterface $report;
     private SeeFactory $seeFactory;
-    private ConfigProviderInterface $fileProvider;
-    private FileDataReader $fileReader;
+    private FiscalLogoResolver $logoResolver;
     private LoggerInterface $logger;
 
     public function __construct(
         ReportInterface $report,
         SeeFactory $seeFactory,
-        ConfigProviderInterface $fileProvider,
-        FileDataReader $fileReader,
+        FiscalLogoResolver $logoResolver,
         LoggerInterface $logger
     ) {
         $this->report = $report;
         $this->seeFactory = $seeFactory;
-        $this->fileProvider = $fileProvider;
-        $this->fileReader = $fileReader;
+        $this->logoResolver = $logoResolver;
         $this->logger = $logger;
     }
 
@@ -51,9 +46,11 @@ class FiscalPdfService
             $hash = $hashOverride !== null && $hashOverride !== ''
                 ? $hashOverride
                 : (new XmlUtils())->getHashSign($signedXml);
+            $logo = $this->logoResolver->resolveForRuc($ruc);
             $parameters = [
                 'system' => [
-                    'logo' => $this->resolveLogo($ruc),
+                    'logo' => $logo['bytes'],
+                    'has_logo' => $logo['has_logo'],
                     'hash' => $hash,
                 ],
                 'user' => [
@@ -69,27 +66,6 @@ class FiscalPdfService
                 'error' => $e->getMessage(),
             ]);
             throw new FiscalPdfRenderException($e->getMessage(), 0, $e);
-        }
-    }
-
-    private function resolveLogo(string $ruc): ?string
-    {
-        $jsonCompanies = $this->fileProvider->get('companies');
-        if ($jsonCompanies === '') {
-            return null;
-        }
-        $companies = json_decode($jsonCompanies, true);
-        if (!is_array($companies) || !isset($companies[$ruc]['logo'])) {
-            return null;
-        }
-        $logoFile = (string) $companies[$ruc]['logo'];
-        if ($logoFile === '') {
-            return null;
-        }
-        try {
-            return $this->fileReader->getContents($logoFile);
-        } catch (\Throwable $e) {
-            return null;
         }
     }
 }

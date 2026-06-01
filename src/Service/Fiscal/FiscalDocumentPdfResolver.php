@@ -64,12 +64,15 @@ class FiscalDocumentPdfResolver
 
     /**
      * Devuelve bytes PDF; persiste en storage si se generó on-demand.
+     * Con $forceRegenerate=true ignora el PDF almacenado (p. ej. tras actualizar logo).
      */
-    public function resolve(FiscalDocument $doc, bool $persist = true): ?string
+    public function resolve(FiscalDocument $doc, bool $persist = true, bool $forceRegenerate = false): ?string
     {
-        $stored = $this->fileFetcher->fetch($doc->getPdfUrl());
-        if ($stored !== null) {
-            return $stored['content'];
+        if (!$forceRegenerate) {
+            $stored = $this->fileFetcher->fetch($doc->getPdfUrl());
+            if ($stored !== null) {
+                return $stored['content'];
+            }
         }
 
         return $this->generate($doc, $persist);

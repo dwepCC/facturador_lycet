@@ -26,6 +26,10 @@ class FileDataReader
     public function getContents($filename): ?string
     {
 
+        if ($filename === null || $filename === '') {
+            return '';
+        }
+
         $path = $this->directory.DIRECTORY_SEPARATOR.$filename;
 
         if (file_exists($path)) {
