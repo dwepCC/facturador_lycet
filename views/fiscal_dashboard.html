@@ -94,12 +94,13 @@
       <div id="detailBox" style="display:none">
         <div id="badges"></div>
         <div class="actions">
-          <button class="btn btn-indigo" id="btnResend">Reenviar</button>
-          <button class="btn btn-amber" id="btnRetry">Reintentar</button>
-          <button class="btn btn-violet" id="btnForce">Forzar</button>
-          <button class="btn btn-teal" id="btnEmail">Email</button>
-          <button class="btn btn-sky" id="btnPoll">Consultar ticket</button>
+          <button class="btn btn-indigo" id="btnResend" type="button">Reenviar</button>
+          <button class="btn btn-amber" id="btnRetry" type="button">Reintentar</button>
+          <button class="btn btn-violet" id="btnForce" type="button">Forzar</button>
+          <button class="btn btn-teal" id="btnEmail" type="button">Email</button>
+          <button class="btn btn-sky" id="btnPoll" type="button">Consultar ticket</button>
         </div>
+        <p id="emitActionHint" class="hint-muted" style="display:none" aria-live="polite"></p>
         <div class="actions">
           <button class="btn btn-slate" data-dl="pdf">Descargar PDF</button>
           <button class="btn btn-emerald" id="btnViewPdf" type="button">Ver PDF</button>
@@ -252,6 +253,7 @@
       qs('detailModal').style.display='none';
       qs('pdfPreviewWrap').style.display='none';
       qs('pdfPreview').src='about:blank';
+      if(!emitActionBusy)setEmitActionHint('');
     }
 
     async function detail(uuid){
@@ -317,8 +319,96 @@
       }
     }
 
+    const EMIT_ACTIONS=[
+      {id:'btnResend',path:'/send',label:'Reenviar'},
+      {id:'btnRetry',path:'/retry',label:'Reintentar'},
+      {id:'btnForce',path:'/force',label:'Forzar'},
+    ];
+    const EMIT_IN_FLIGHT=['pending','queued','sending','retrying'];
+    let emitActionBusy=false;
+
+    function setEmitActionHint(text){
+      const hint=qs('emitActionHint');
+      if(!hint)return;
+      if(text){
+        hint.style.display='block';
+        hint.textContent=text;
+      }else{
+        hint.style.display='none';
+        hint.textContent='';
+      }
+    }
+
+    function setEmitButtonsBusy(busy,activeId){
+      EMIT_ACTIONS.forEach(({id,label})=>{
+        const btn=qs(id);
+        if(!btn)return;
+        btn.disabled=busy;
+        btn.setAttribute('aria-disabled',busy?'true':'false');
+        if(busy&&id===activeId){
+          btn.textContent='Procesando…';
+          btn.setAttribute('aria-busy','true');
+        }else{
+          btn.textContent=label;
+          btn.removeAttribute('aria-busy');
+        }
+      });
+    }
+
+    async function waitEmitOutcome(baselineAttempts){
+      const deadline=Date.now()+120000;
+      const started=Date.now();
+      while(Date.now()<deadline){
+        await new Promise(res=>setTimeout(res,2000));
+        const d=await apiFetch(url('/documents/'+selectedUuid)).then(r=>r.json());
+        const doc=d.document||{};
+        const attempts=d.attempts||[];
+        const status=String(doc.status||'').toLowerCase();
+        if(attempts.length>baselineAttempts){
+          await detail(selectedUuid);
+          return true;
+        }
+        if(!EMIT_IN_FLIGHT.includes(status)&&Date.now()-started>=4000){
+          await detail(selectedUuid);
+          return true;
+        }
+        await detail(selectedUuid);
+      }
+      return false;
+    }
+
+    async function emitAction(path,buttonId,label){
+      if(!selectedUuid||emitActionBusy)return;
+      emitActionBusy=true;
+      setEmitButtonsBusy(true,buttonId);
+      setEmitActionHint('Emisión en curso. No pulse otro botón hasta que termine…');
+      let baselineAttempts=0;
+      try{
+        const before=await apiFetch(url('/documents/'+selectedUuid)).then(r=>r.json());
+        baselineAttempts=(before.attempts||[]).length;
+        const r=await apiFetch(url('/documents/'+selectedUuid+path),{method:'POST'});
+        const body=await r.json().catch(()=>({}));
+        if(!r.ok)throw new Error(body.error||'No se pudo encolar la emisión');
+        const finished=await waitEmitOutcome(baselineAttempts);
+        if(!finished){
+          setEmitActionHint('Encolado. Si el estado no cambia, verifique que el worker fiscal esté activo.');
+        }else{
+          setEmitActionHint('');
+        }
+        await detail(selectedUuid);
+        await loadStats();
+        await loadList();
+      }catch(e){
+        setEmitActionHint('');
+        alert(e.message||'Error al procesar la emisión');
+      }finally{
+        emitActionBusy=false;
+        setEmitButtonsBusy(false);
+      }
+    }
+
     async function action(path){
-      if(!selectedUuid)return;
+      if(!selectedUuid||emitActionBusy)return;
       await apiFetch(url('/documents/'+selectedUuid+path),{method:'POST'});
       await detail(selectedUuid);
       await loadStats();
@@ -344,8 +434,11 @@
     document.querySelectorAll('[data-dl]').forEach(b=>b.onclick=()=>{if(selectedUuid)window.open(url('/documents/'+selectedUuid+'/download/'+b.dataset.dl),'_blank');});
     qs('btnViewPdf').onclick=showPdfInline;
     qs('btnGenPdf').onclick=generatePdf;
-    ['btnResend','/send','btnRetry','/retry','btnForce','/force','btnEmail','/email','btnPoll','/poll']
-      .reduce((_,v,i,a)=>{if(i%2===0)qs(v).onclick=()=>action(a[i+1]);});
+    EMIT_ACTIONS.forEach(({id,path,label})=>{
+      qs(id).onclick=()=>emitAction(path,id,label);
+    });
+    qs('btnEmail').onclick=()=>action('/email');
+    qs('btnPoll').onclick=()=>action('/poll');
 
     setDefaultDateRange();
     loadStats();

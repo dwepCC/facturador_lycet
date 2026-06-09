@@ -314,7 +314,15 @@ body.fiscal-ui {
   transition: filter 0.15s, transform 0.1s;
 }
 
-.btn:hover { filter: brightness(1.05); transform: translateY(-1px); }
+.btn:hover:not(:disabled) { filter: brightness(1.05); transform: translateY(-1px); }
+
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  filter: none;
+}
 
 .btn-indigo { background: var(--primary); color: #fff; }
 .btn-slate { background: var(--surface-muted); color: var(--text); border: 1px solid var(--border); }
