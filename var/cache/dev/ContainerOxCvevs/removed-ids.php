@@ -1,6 +1,6 @@
 <?php
 
-namespace ContainerVGTlbPj;
+namespace ContainerOxCvevs;
 
 return [
     '.1_ServiceLocator~UUEoc9L' => true,

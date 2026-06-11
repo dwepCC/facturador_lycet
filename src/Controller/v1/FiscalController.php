@@ -18,6 +18,7 @@ use App\Service\Fiscal\FiscalDocumentPdfResolver;
 use App\Service\Fiscal\FiscalFileFetcher;
 use App\Service\Fiscal\FiscalPdfRenderException;
 use App\Service\Fiscal\FiscalQueueService;
+use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -42,6 +43,7 @@ class FiscalController extends AbstractController
     private FiscalCompanySyncService $companySyncService;
     private FiscalConnectionTestService $connectionTestService;
     private FiscalDocumentPdfResolver $pdfResolver;
+    private EntityManagerInterface $em;
 
     public function __construct(
         FiscalDocumentService $documentService,
@@ -53,7 +55,8 @@ class FiscalController extends AbstractController
         EmpresaRepository $empresaRepo,
         FiscalCompanySyncService $companySyncService,
         FiscalConnectionTestService $connectionTestService,
-        FiscalDocumentPdfResolver $pdfResolver
+        FiscalDocumentPdfResolver $pdfResolver,
+        EntityManagerInterface $em
     ) {
         $this->documentService = $documentService;
         $this->repo = $repo;
@@ -65,6 +68,7 @@ class FiscalController extends AbstractController
         $this->companySyncService = $companySyncService;
         $this->connectionTestService = $connectionTestService;
         $this->pdfResolver = $pdfResolver;
+        $this->em = $em;
     }
 
     /**
@@ -428,6 +432,11 @@ class FiscalController extends AbstractController
 
         try {
             $this->queue->push($queue, ['document_uuid' => $uuid]);
+        } catch (\Throwable $e) {
+            return new JsonResponse(['error' => $e->getMessage()], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+
+        try {
             if ($queue === FiscalQueueService::QUEUE_EMIT
                 && in_array($doc->getStatus(), [
                     FiscalDocument::STATUS_PENDING,
@@ -438,10 +447,10 @@ class FiscalController extends AbstractController
             ) {
                 $doc->setStatus(FiscalDocument::STATUS_QUEUED);
                 $doc->setQueuedAt(new \DateTimeImmutable());
-                $this->repo->getEntityManager()->flush();
+                $this->em->flush();
             }
-        } catch (\Throwable $e) {
-            return new JsonResponse(['error' => $e->getMessage()], Response::HTTP_INTERNAL_SERVER_ERROR);
+        } catch (\Throwable) {
+            // El job ya está en Redis; no devolver error al cliente por fallo de persistencia auxiliar.
         }
 
         if ($this->queue->isEnabled()) {

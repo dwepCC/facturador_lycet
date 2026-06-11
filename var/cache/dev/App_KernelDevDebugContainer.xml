@@ -385,6 +385,7 @@
       <argument type="service" id="App\Service\Fiscal\FiscalCompanySyncService"/>
       <argument type="service" id="App\Service\Fiscal\FiscalConnectionTestService"/>
       <argument type="service" id="App\Service\Fiscal\FiscalDocumentPdfResolver"/>
+      <argument type="service" id="doctrine.orm.default_entity_manager"/>
       <call method="setContainer">
         <argument type="service" id=".service_locator.mx0UMmY.App\Controller\v1\FiscalController"/>
       </call>
