@@ -152,7 +152,7 @@ services:
             - '@App\Service\EnvConfigProvider'
             - '@App\Service\ConfigProviderInterface'
             - '@App\Service\FileDataReader'
-            - '@Greenter\Api'
+            - '%kernel.cache_dir%'
 
     App\EventSubscriber\TokenSubscriber:
         arguments:
@@ -196,6 +196,10 @@ services:
         arguments:
             $dataPath: '%data_path%'
 
+    App\Service\Fiscal\Provider\NubefactGreProvider:
+        arguments:
+            $dataPath: '%data_path%'
+
     App\Service\Fiscal\FiscalLogoResolver:
         arguments:
             $dataPath: '%data_path%'
@@ -208,6 +212,7 @@ services:
         arguments:
             $providers:
                 - '@App\Service\Fiscal\Provider\ValidaPseProvider'
+                - '@App\Service\Fiscal\Provider\NubefactGreProvider'
                 - '@App\Service\Fiscal\Provider\SunatDirectProvider'
 
     App\Controller\FiscalFilesController:

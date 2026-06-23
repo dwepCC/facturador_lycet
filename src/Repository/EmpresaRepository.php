@@ -51,6 +51,8 @@ class EmpresaRepository extends ServiceEntityRepository
                 'email_enabled' => $e->isEmailEnabled(),
                 'retry_enabled' => $e->isRetryEnabled(),
                 'enabled' => $e->isEnabled(),
+                'CLIENT_ID' => $e->getGreClientId(),
+                'CLIENT_SECRET' => $e->getGreClientSecret(),
             ];
         }
         return $result;

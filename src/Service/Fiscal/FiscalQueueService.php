@@ -137,13 +137,21 @@ class FiscalQueueService
         return is_array($decoded) ? $decoded : null;
     }
 
+    /**
+     * Cola de trabajo (LIST) y reintentos programados (ZSET) no pueden compartir la misma clave Redis.
+     */
+    private function scheduledQueueKey(string $queue): string
+    {
+        return $queue . ':scheduled';
+    }
+
     public function scheduleRetry(string $documentUuid, int $delaySeconds, string $queue = self::QUEUE_RETRY): void
     {
         if ($this->client === null) {
             return;
         }
         $score = time() + $delaySeconds;
-        $this->client->zadd($queue, [$documentUuid => $score]);
+        $this->client->zadd($this->scheduledQueueKey($queue), [$documentUuid => $score]);
     }
 
     /**
@@ -154,13 +162,14 @@ class FiscalQueueService
         if ($this->client === null) {
             return [];
         }
+        $scheduledKey = $this->scheduledQueueKey($queue);
         $now = time();
-        $items = $this->client->zrangebyscore($queue, '-inf', (string) $now, ['LIMIT' => [0, $limit]]);
+        $items = $this->client->zrangebyscore($scheduledKey, '-inf', (string) $now, ['LIMIT' => [0, $limit]]);
         if (!is_array($items)) {
             return [];
         }
         foreach ($items as $uuid) {
-            $this->client->zrem($queue, [$uuid]);
+            $this->client->zrem($scheduledKey, [$uuid]);
         }
         return array_map('strval', $items);
     }
@@ -214,6 +223,6 @@ class FiscalQueueService
 
     public function scheduledRetryCount(string $queue = self::QUEUE_RETRY): int
     {
-        return $this->safeRead(0, fn () => (int) $this->client->zcard($queue));
+        return $this->safeRead(0, fn () => (int) $this->client->zcard($this->scheduledQueueKey($queue)));
     }
 }

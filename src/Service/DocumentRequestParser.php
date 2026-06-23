@@ -8,6 +8,7 @@
 
 namespace App\Service;
 
+use Greenter\Model\Despatch\Despatch;
 use Greenter\Model\DocumentInterface;
 use JMS\Serializer\SerializerInterface;
 use Symfony\Component\HttpFoundation\Request;
@@ -38,16 +39,26 @@ class DocumentRequestParser implements RequestParserInterface
         $data = $request->getContent();
 
         $dataJson = json_decode($data, true);
+        if (!is_array($dataJson)) {
+            throw new \InvalidArgumentException('JSON inválido en el body');
+        }
+        if ($class === Despatch::class) {
+            $dataJson = DespatchDateNormalizer::normalize($dataJson);
+        }
         if(array_key_exists('document', $dataJson)) {
+            $doc = $dataJson['document'];
+            if ($class === Despatch::class && is_array($doc)) {
+                $doc = DespatchDateNormalizer::normalize($doc);
+            }
             return $this->serializer->deserialize(
-                json_encode($dataJson['document']),
+                json_encode($doc),
                 $class,
                 'json'
             );
         }
 
         return $this->serializer->deserialize(
-            $data,
+            json_encode($dataJson),
             $class,
             'json'
         );

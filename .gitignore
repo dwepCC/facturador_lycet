@@ -24,4 +24,5 @@
 ###> symfony/phpunit-bridge ###
 .phpunit.result.cache
 /phpunit.xml
-###< symfony/phpunit-bridge ###
+###< symfony/phpunit-bridge ###var/cache/
+var/log/

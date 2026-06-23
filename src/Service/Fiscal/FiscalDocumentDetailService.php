@@ -204,7 +204,10 @@ class FiscalDocumentDetailService
         $push($events, 'queued', $doc->getQueuedAt());
         $push($events, 'sent', $doc->getSentAt(), ['ticket' => $doc->getTicket()]);
         $push($events, 'accepted', $doc->getAcceptedAt(), ['sunat_code' => $doc->getSunatCode()]);
-        $push($events, 'rejected', $doc->getRejectedAt(), ['sunat_message' => $doc->getSunatMessage()]);
+        $push($events, 'rejected', $doc->getRejectedAt(), [
+            'sunat_code' => $doc->getSunatCode(),
+            'sunat_message' => $doc->getSunatMessage(),
+        ]);
 
         foreach ($attempts as $a) {
             $events[] = [
