@@ -41,15 +41,18 @@ class DocumentRequest implements DocumentRequestInterface
      * @var ContainerInterface
      */
     private $container;
+    private FiscalLogoResolver $logoResolver;
 
     public function __construct(
         RequestStack $requestStack,
         RequestParserInterface $parser,
-        ContainerInterface $container
+        ContainerInterface $container,
+        FiscalLogoResolver $logoResolver
     ) {
         $this->requestStack = $requestStack;
         $this->parser = $parser;
         $this->container = $container;
+        $this->logoResolver = $logoResolver;
     }
 
     /**
@@ -133,9 +136,7 @@ class DocumentRequest implements DocumentRequestInterface
 
         $company = $document->getCompany();
         $ruc = trim((string) $company->getRuc());
-        /** @var FiscalLogoResolver $logoResolver */
-        $logoResolver = $this->container->get(FiscalLogoResolver::class);
-        $logo = $logoResolver->resolveForRuc($ruc);
+        $logo = $this->logoResolver->resolveForRuc($ruc);
 
         try {
             $see = $this->getSee($class, $ruc);

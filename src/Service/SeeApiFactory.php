@@ -12,30 +12,26 @@ class SeeApiFactory
     private ConfigProviderInterface $config;
     private ConfigProviderInterface $fileProvider;
     private FileDataReader $fileReader;
-    private Api $see;
+    private string $cacheDir;
 
-    /**
-     * SeeFactory constructor.
-     * @param ConfigProviderInterface $config
-     * @param ConfigProviderInterface $fileProvider
-     * @param FileDataReader $fileReader
-     * @param Api $see
-     */
-    public function __construct(ConfigProviderInterface $config, ConfigProviderInterface $fileProvider, FileDataReader $fileReader, Api $see)
-    {
+    public function __construct(
+        ConfigProviderInterface $config,
+        ConfigProviderInterface $fileProvider,
+        FileDataReader $fileReader,
+        string $cacheDir
+    ) {
         $this->config = $config;
         $this->fileProvider = $fileProvider;
         $this->fileReader = $fileReader;
-        $this->see = $see;
+        $this->cacheDir = $cacheDir;
     }
 
     /**
-     * Construye Api con credenciales de la empresa en BD (multiempresa).
-     * No usa .env como respaldo: si el RUC no está registrado, lanza EmpresaNoRegistradaException.
+     * Construye Api GRE con endpoints y credenciales según ambiente de la empresa.
+     * Pruebas: NubeFact (AUTH_URL/API_URL + CLIENT_ID/SECRET del .env).
+     * Producción: SUNAT API (URLs oficiales + CLIENT_ID/SECRET por empresa).
      *
-     * @param string|null $ruc RUC de la empresa (obligatorio en modo multiempresa)
-     * @return Api
-     * @throws EmpresaNoRegistradaException Si el RUC está vacío o no existe en la BD
+     * @throws EmpresaNoRegistradaException
      */
     public function build(?string $ruc): Api
     {
@@ -43,50 +39,103 @@ class SeeApiFactory
         if ($ruc === '') {
             throw new EmpresaNoRegistradaException('', 'RUC requerido. La aplicación opera en modo multiempresa con datos en base de datos.');
         }
-        if (!$this->configureSeeWithRuc($ruc)) {
+
+        $api = $this->createConfiguredApi($ruc);
+        if ($api === null) {
             throw new EmpresaNoRegistradaException($ruc);
         }
 
-        return $this->see;
+        return $api;
     }
 
-    private function configureSeeWithRuc(string $ruc): bool
+    private function createConfiguredApi(string $ruc): ?Api
     {
-        $ruc = trim((string) $ruc);
+        $ruc = trim($ruc);
         if ($ruc === '') {
-            return false;
+            return null;
         }
 
         $jsonCompanies = $this->fileProvider->get('companies');
         if (empty($jsonCompanies)) {
-            return false;
+            return null;
         }
 
         $companies = json_decode($jsonCompanies, true);
         if (!is_array($companies) || !array_key_exists($ruc, $companies)) {
-            return false;
+            return null;
         }
 
-        $config = $companies[$ruc];
-        list ($rucPart, $user) = $this->getRucAndUser($config['SOL_USER']);
-        $this->see->setClaveSOL($rucPart, $user, $config['SOL_PASS']);
-        $this->see->setCertificate($this->fileReader->getContents($config['certificate']));
-        $this->see->setApiCredentials($config['CLIENT_ID'], $config['CLIENT_SECRET']);
+        $companyConfig = $companies[$ruc];
+        $ambiente = strtolower(trim((string) ($companyConfig['ambiente'] ?? 'pruebas')));
+        $isProd = $ambiente === 'produccion';
 
-        return true;
+        if ($isProd) {
+            $clientId = trim((string) ($companyConfig['CLIENT_ID'] ?? ''));
+            $clientSecret = trim((string) ($companyConfig['CLIENT_SECRET'] ?? ''));
+            if ($clientId === '' || $clientSecret === '') {
+                throw new EmpresaNoRegistradaException(
+                    $ruc,
+                    'La empresa no tiene configuradas las credenciales SUNAT API GRE (Client ID/Secret) para producción.'
+                );
+            }
+        } else {
+            $clientId = trim($this->config->get('CLIENT_ID'));
+            $clientSecret = trim($this->config->get('CLIENT_SECRET'));
+            if ($clientId === '' || $clientSecret === '') {
+                return null;
+            }
+        }
+
+        [$rucPart, $user] = $this->getRucAndUser($companyConfig['SOL_USER']);
+        $endpoints = $this->resolveEndpoints($isProd);
+        $api = new Api($endpoints);
+        $api->setBuilderOptions(['cache' => $this->cacheDir]);
+        $api->setClaveSOL($rucPart, $user, $companyConfig['SOL_PASS']);
+        $api->setCertificate($this->fileReader->getContents($companyConfig['certificate']));
+        $api->setApiCredentials($clientId, $clientSecret);
+
+        return $api;
     }
 
     /**
-     * @deprecated Solo para compatibilidad; en multiempresa no se usa fallback a .env
+     * @return array{auth: string, cpe: string}
      */
-    private function configureSeeWithEnv()
+    private function resolveEndpoints(bool $isProduction): array
     {
-        list ($ruc, $user) = $this->getRucAndUser($this->config->get('SOL_USER'));
-        $this->see->setClaveSOL($ruc, $user, $this->config->get('SOL_PASS'));
-        $this->see->setApiCredentials($this->config->get('CLIENT_ID'), $this->config->get('CLIENT_SECRET'));
-        $this->see->setCertificate($this->fileProvider->get('certificate'));
+        if ($isProduction) {
+            $auth = trim((string) $this->config->get('GRE_AUTH_URL_PRO'));
+            $cpe = trim((string) $this->config->get('GRE_API_URL_PRO'));
+            if ($auth === '') {
+                $auth = 'https://api-seguridad.sunat.gob.pe/v1';
+            }
+            if ($cpe === '') {
+                $cpe = 'https://api-cpe.sunat.gob.pe/v1';
+            }
+
+            return [
+                'auth' => rtrim($auth, '/'),
+                'cpe' => rtrim($cpe, '/'),
+            ];
+        }
+
+        $auth = trim((string) $this->config->get('AUTH_URL'));
+        $cpe = trim((string) $this->config->get('API_URL'));
+        if ($auth === '') {
+            $auth = 'https://gre-test.nubefact.com/v1';
+        }
+        if ($cpe === '') {
+            $cpe = $auth;
+        }
+
+        return [
+            'auth' => rtrim($auth, '/'),
+            'cpe' => rtrim($cpe, '/'),
+        ];
     }
 
+    /**
+     * @return array{0: string, 1: string}
+     */
     private function getRucAndUser(string $username): array
     {
         $ruc = substr($username, 0, 11);

@@ -51,8 +51,11 @@ class FiscalCompanySyncService
         if ($provider === '') {
             $provider = $sendMode === 'pse' ? 'validapse' : 'sunat';
         }
+        if ($sendMode === 'sunat_direct') {
+            $provider = 'sunat';
+        }
 
-        $this->validateByMode($sendMode, $payload);
+        $this->validateByMode($sendMode, $payload, $provider);
 
         $entry = $this->buildEmpresaEntry($payload, $sendMode, $provider);
         $this->empresasService->addOrUpdateEmpresas([$ruc => $entry]);
@@ -77,7 +80,7 @@ class FiscalCompanySyncService
     /**
      * @param array<string, mixed> $payload
      */
-    private function validateByMode(string $sendMode, array $payload): void
+    private function validateByMode(string $sendMode, array $payload, string $provider): void
     {
         if ($sendMode === 'pse') {
             $pse = is_array($payload['pse'] ?? null) ? $payload['pse'] : $payload;
@@ -105,6 +108,10 @@ class FiscalCompanySyncService
             if ($token === '' && ($existing === null || $existing->resolvePseToken() === '')) {
                 throw new \InvalidArgumentException('PSE requiere contraseña / token de acceso');
             }
+            $ambiente = strtolower(trim((string) ($payload['ambiente'] ?? $payload['environment'] ?? 'pruebas')));
+            if ($ambiente === 'produccion') {
+                $this->assertProductionSunatApiCredentials($payload, $existing);
+            }
             return;
         }
 
@@ -127,6 +134,31 @@ class FiscalCompanySyncService
         $hasCert = $cert !== '' || ($existing !== null && $existing->getCertificate());
         if (!$hasCert) {
             throw new \InvalidArgumentException('SUNAT directa requiere certificado digital');
+        }
+
+        $ambiente = strtolower(trim((string) ($payload['ambiente'] ?? $payload['environment'] ?? 'pruebas')));
+        if ($ambiente === 'produccion') {
+            $this->assertProductionSunatApiCredentials($payload, $existing);
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function assertProductionSunatApiCredentials(array $payload, ?Empresa $existing): void
+    {
+        $greId = trim((string) ($payload['gre_client_id'] ?? $payload['CLIENT_ID'] ?? ''));
+        $greSec = trim((string) ($payload['gre_client_secret'] ?? $payload['CLIENT_SECRET'] ?? ''));
+        if ($greId === '' && $existing !== null) {
+            $greId = trim((string) ($existing->getGreClientId() ?? ''));
+        }
+        if ($greSec === '' && $existing !== null) {
+            $greSec = trim((string) ($existing->getGreClientSecret() ?? ''));
+        }
+        if ($greId === '' || $greSec === '') {
+            throw new \InvalidArgumentException(
+                'Producción requiere Client ID y Client Secret SUNAT API configurados en la empresa'
+            );
         }
     }
 
@@ -206,6 +238,18 @@ class FiscalCompanySyncService
             }
         }
 
+        $ambiente = strtolower(trim((string) ($entry['ambiente'] ?? 'pruebas')));
+        if ($ambiente === 'produccion') {
+            $greId = trim((string) ($payload['gre_client_id'] ?? $payload['CLIENT_ID'] ?? ''));
+            if ($greId !== '') {
+                $entry['gre_client_id'] = $greId;
+            }
+            $greSec = trim((string) ($payload['gre_client_secret'] ?? $payload['CLIENT_SECRET'] ?? ''));
+            if ($greSec !== '') {
+                $entry['gre_client_secret'] = $greSec;
+            }
+        }
+
         if (!empty($payload['logo_base64'])) {
             $entry['logo_base64'] = (string) $payload['logo_base64'];
         }
@@ -243,6 +287,9 @@ class FiscalCompanySyncService
             'pse_token_configured' => $entity->resolvePseToken() !== '',
             'sol_configured' => trim($entity->getSolUser()) !== '' && trim($entity->getSolPass()) !== '',
             'certificate_configured' => $entity->getCertificate() !== null && trim((string) $entity->getCertificate()) !== '',
+            'gre_client_configured' => trim((string) ($entity->getGreClientId() ?? '')) !== ''
+                && trim((string) ($entity->getGreClientSecret() ?? '')) !== '',
+            'gre_client_id' => $entity->getGreClientId(),
             'enabled' => $entity->isEnabled(),
         ];
     }

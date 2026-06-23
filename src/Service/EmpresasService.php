@@ -63,6 +63,12 @@ class EmpresasService
         'retry_enabled',
         'retryEnabled',
         'enabled',
+        'gre_client_id',
+        'greClientId',
+        'gre_client_secret',
+        'greClientSecret',
+        'CLIENT_ID',
+        'CLIENT_SECRET',
     ];
 
     private const AMBIENTES_VALIDOS = ['pruebas', 'produccion'];
@@ -108,6 +114,12 @@ class EmpresasService
             }
             if (isset($row['pse_token'])) {
                 $row['pse_token'] = '***';
+            }
+            if (isset($row['CLIENT_SECRET'])) {
+                $row['CLIENT_SECRET'] = '***';
+            }
+            if (isset($row['gre_client_secret'])) {
+                $row['gre_client_secret'] = '***';
             }
             $all[$ruc] = $row;
         }
@@ -373,6 +385,14 @@ class EmpresasService
         }
         if (array_key_exists('enabled', $entry)) {
             $entity->setEnabled((bool) $entry['enabled']);
+        }
+        $greClientId = $entry['gre_client_id'] ?? $entry['greClientId'] ?? $entry['CLIENT_ID'] ?? null;
+        if (is_string($greClientId) && trim($greClientId) !== '') {
+            $entity->setGreClientId(trim($greClientId));
+        }
+        $greClientSecret = $entry['gre_client_secret'] ?? $entry['greClientSecret'] ?? $entry['CLIENT_SECRET'] ?? null;
+        if (is_string($greClientSecret) && $greClientSecret !== '') {
+            $entity->setGreClientSecret($greClientSecret);
         }
     }
 

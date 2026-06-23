@@ -34,10 +34,28 @@ class SunatDirectProvider extends AbstractFiscalProvider
     public function supports(FiscalDocument $doc, Empresa $empresa): bool
     {
         $mode = strtolower(trim((string) ($doc->getSendMode() ?? $empresa->getSendMode())));
-        return $mode === '' || $mode === 'sunat_direct' || $mode === 'sunat';
+        if ($mode !== '' && $mode !== 'sunat_direct' && $mode !== 'sunat') {
+            return false;
+        }
+        $tipo = strtoupper(trim((string) $doc->getDocumentType()));
+        if (in_array($tipo, ['09', '31'], true)) {
+            return false;
+        }
+
+        return true;
     }
 
     public function validateConnection(Empresa $empresa): FiscalConnectionResult
+    {
+        $base = $this->validateSolAndCertificate($empresa);
+        if (!$base->success) {
+            return $base;
+        }
+
+        return $this->validateProductionSunatApi($empresa, $base);
+    }
+
+    private function validateSolAndCertificate(Empresa $empresa): FiscalConnectionResult
     {
         $ruc = $empresa->getRuc();
         if (trim($empresa->getSolUser()) === '' || trim($empresa->getSolPass()) === '') {

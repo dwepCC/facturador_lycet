@@ -132,7 +132,7 @@ class FiscalEmitProcessor
 
             $result = $this->providerResolver->emit($doc, $empresa, $documentClass, $greenterDoc);
 
-            if ($this->handleTicketOnlyResult($doc, $documentClass, $result, $providerName, $attemptNum, $started, $empresa)) {
+            if ($this->handleTicketOnlyResult($doc, $documentClass, $greenterDoc, $result, $providerName, $attemptNum, $started, $empresa)) {
                 return;
             }
 
@@ -307,15 +307,18 @@ class FiscalEmitProcessor
     private function handleTicketOnlyResult(
         FiscalDocument $doc,
         string $documentClass,
+        DocumentInterface $greenterDoc,
         FiscalEmitResult $result,
         string $providerName,
         int $attemptNum,
         float $started,
         Empresa $empresa
     ): bool {
-        $signedXml = $result->signedXml ?? '';
         $ticket = $result->ticket ?? '';
-        if ($signedXml !== '' || $ticket === '' || !FiscalDocumentClassResolver::isTicketBased($documentClass)) {
+        if ($ticket === '' || !FiscalDocumentClassResolver::isTicketBased($documentClass)) {
+            return false;
+        }
+        if (($result->cdrZip ?? '') !== '' && ($result->success ?? false)) {
             return false;
         }
 
@@ -324,6 +327,42 @@ class FiscalEmitProcessor
         $doc->setSunatCode($result->sunatCode);
         $doc->setSunatMessage($result->sunatMessage);
         $doc->setStatus(FiscalDocument::STATUS_SENT);
+
+        $signedXml = trim((string) ($result->signedXml ?? ''));
+        if ($signedXml !== '') {
+            $pdf = $result->pdf ?? null;
+            if (($pdf === null || $pdf === '') && FiscalDocumentClassResolver::supportsPdf($documentClass)) {
+                $pdf = $this->pdfService->render($documentClass, $greenterDoc, $signedXml);
+            }
+            $stored = $this->storage->store(
+                $doc->getTenantSlug(),
+                $doc->getDocumentType(),
+                $doc->getSeries(),
+                $doc->getNumber(),
+                $result->unsignedXml ?? null,
+                $signedXml,
+                null,
+                $pdf
+            );
+            $doc->setXmlUrl($stored['xml_url']);
+            $doc->setUnsignedXmlUrl($stored['unsigned_xml_url']);
+            $doc->setXmlSignedUrl($stored['xml_signed_url']);
+            $doc->setPdfUrl($stored['pdf_url']);
+            if ($result->hash !== null && $result->hash !== '') {
+                $doc->setHash($result->hash);
+            }
+            if (($doc->getPdfUrl() === null || $doc->getPdfUrl() === '') && $this->pdfResolver !== null) {
+                try {
+                    $this->pdfResolver->generate($doc, true);
+                } catch (\Throwable $e) {
+                    $this->logger->warning('fiscal_pdf_generate_after_ticket_emit_failed', [
+                        'uuid' => $doc->getDocumentUuid(),
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+        }
+
         $this->recordAttempt($doc, $attemptNum, $providerName, FiscalDocument::STATUS_SENT, $result, null, $started);
         $this->em->flush();
         $this->notifyOrEnqueueSync($doc);
@@ -400,6 +439,8 @@ class FiscalEmitProcessor
             $data = $data['document'];
         }
 
+        $data = DespatchSnapshotEnricher::enrich($data);
+
         $class = FiscalDocumentClassResolver::resolve($data, $doc);
         $greenterDoc = $this->serializer->deserialize(json_encode($data), $class, 'json');
         return [$class, $greenterDoc];
@@ -463,6 +504,8 @@ class FiscalEmitProcessor
             'certificado inválido: ',
             'certificado inválido',
             'clave privada',
+            'cliente no autorizado',
+            'token gre rechazado',
         ] as $needle) {
             if (str_contains($m, $needle)) {
                 return true;

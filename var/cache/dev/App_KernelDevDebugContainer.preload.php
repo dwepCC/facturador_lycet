@@ -10,7 +10,7 @@ if (in_array(PHP_SAPI, ['cli', 'phpdbg'], true)) {
 }
 
 require dirname(__DIR__, 3).''.\DIRECTORY_SEPARATOR.'vendor/autoload.php';
-(require __DIR__.'/App_KernelDevDebugContainer.php')->set(\ContainerOxCvevs\App_KernelDevDebugContainer::class, null);
+(require __DIR__.'/App_KernelDevDebugContainer.php')->set(\ContainerWDwOlxP\App_KernelDevDebugContainer::class, null);
 
 $classes = [];
 $classes[] = 'Symfony\Bundle\FrameworkBundle\FrameworkBundle';
@@ -80,8 +80,8 @@ $classes[] = 'Symfony\Component\Mailer\Transport\Transports';
 $classes[] = 'Symfony\Component\Mailer\Transport';
 $classes[] = 'App\Service\Fiscal\FiscalEmitProcessor';
 $classes[] = 'App\Service\Fiscal\FiscalFileFetcher';
-$classes[] = 'App\Service\Fiscal\FiscalPdfService';
 $classes[] = 'App\Service\Fiscal\FiscalLogoResolver';
+$classes[] = 'App\Service\Fiscal\FiscalPdfService';
 $classes[] = 'App\Service\Fiscal\FiscalQueueService';
 $classes[] = 'App\Service\Fiscal\FiscalJobDispatcher';
 $classes[] = 'App\Service\Fiscal\FiscalStatusPollProcessor';
@@ -100,6 +100,7 @@ $classes[] = 'App\Service\Fiscal\Observability\FiscalOperationsService';
 $classes[] = 'App\Service\Fiscal\Provider\FiscalProviderResolver';
 $classes[] = 'App\Service\Fiscal\Provider\ValidaPseProvider';
 $classes[] = 'App\Service\Fiscal\Provider\PseAuthBuilder';
+$classes[] = 'App\Service\Fiscal\Provider\NubefactGreProvider';
 $classes[] = 'App\Service\Fiscal\Provider\SunatDirectProvider';
 $classes[] = 'App\Service\PdfReportDecorator';
 $classes[] = 'App\Service\HtmlReportDecorator';

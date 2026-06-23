@@ -66,6 +66,7 @@ class FiscalDocumentService
             throw new \InvalidArgumentException('document JSON requerido');
         }
         unset($snapshot['_meta']);
+        $snapshot = DespatchSnapshotEnricher::enrich($snapshot);
 
         $docType = (string) ($snapshot['tipoDoc'] ?? $payload['document_type'] ?? '03');
         $series = (string) ($snapshot['serie'] ?? $payload['series'] ?? '');

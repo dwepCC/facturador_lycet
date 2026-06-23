@@ -30,12 +30,7 @@ class ValidaPseProvider extends AbstractFiscalProvider
 
     public function supports(FiscalDocument $doc, Empresa $empresa): bool
     {
-        $mode = $this->resolveSendMode($doc, $empresa);
-        if ($mode === 'pse') {
-            return true;
-        }
-        $provider = strtolower(trim((string) ($doc->getProvider() ?? $empresa->getProvider() ?? '')));
-        return in_array($provider, ['validapse', 'pse', 'nubefact', 'digiflow'], true);
+        return $this->resolveSendMode($doc, $empresa) === 'pse';
     }
 
     public function validateConnection(Empresa $empresa): FiscalConnectionResult
@@ -46,6 +41,12 @@ class ValidaPseProvider extends AbstractFiscalProvider
         }
         if ($baseUrl === '') {
             return FiscalConnectionResult::fail('configuration_missing', 'pse_base_url no configurada');
+        }
+        if (trim((string) ($empresa->getPseUser() ?? '')) === '') {
+            return FiscalConnectionResult::fail('invalid_credentials', 'Usuario PSE no configurado');
+        }
+        if ($empresa->resolvePseToken() === '') {
+            return FiscalConnectionResult::fail('invalid_credentials', 'Token/contraseña PSE no configurado');
         }
 
         try {
@@ -76,7 +77,9 @@ class ValidaPseProvider extends AbstractFiscalProvider
             return FiscalConnectionResult::fail('invalid_credentials', 'PSE rechazó credenciales (HTTP ' . $httpCode . ')');
         }
         if ($httpCode >= 200 && $httpCode < 500) {
-            return FiscalConnectionResult::ok('PSE accesible (HTTP ' . $httpCode . ')');
+            $base = FiscalConnectionResult::ok('PSE accesible (HTTP ' . $httpCode . ')');
+
+            return $this->validateProductionSunatApi($empresa, $base);
         }
         return FiscalConnectionResult::fail('error', 'PSE no accesible (HTTP ' . $httpCode . ')');
     }

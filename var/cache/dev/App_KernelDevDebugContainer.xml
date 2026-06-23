@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <container xmlns="http://symfony.com/schema/dic/services" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://symfony.com/schema/dic/services https://symfony.com/schema/dic/services/services-1.0.xsd">
   <parameters>
-    <parameter key="kernel.project_dir">D:\tukifac_premium_prod\facturador_lycet</parameter>
+    <parameter key="kernel.project_dir">E:\tukifac\tukifac_premium\facturador_lycet</parameter>
     <parameter key="kernel.environment">dev</parameter>
     <parameter key="kernel.runtime_environment">%env(default:kernel.environment:APP_RUNTIME_ENV)%</parameter>
     <parameter key="kernel.debug">true</parameter>
-    <parameter key="kernel.build_dir">D:\tukifac_premium_prod\facturador_lycet\var\cache\dev</parameter>
-    <parameter key="kernel.cache_dir">D:\tukifac_premium_prod\facturador_lycet\var\cache\dev</parameter>
-    <parameter key="kernel.logs_dir">D:\tukifac_premium_prod\facturador_lycet\var\log</parameter>
+    <parameter key="kernel.build_dir">E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev</parameter>
+    <parameter key="kernel.cache_dir">E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev</parameter>
+    <parameter key="kernel.logs_dir">E:\tukifac\tukifac_premium\facturador_lycet\var\log</parameter>
     <parameter key="kernel.bundles" type="collection">
       <parameter key="FrameworkBundle">Symfony\Bundle\FrameworkBundle\FrameworkBundle</parameter>
       <parameter key="NelmioCorsBundle">Nelmio\CorsBundle\NelmioCorsBundle</parameter>
@@ -19,31 +19,31 @@
     </parameter>
     <parameter key="kernel.bundles_metadata" type="collection">
       <parameter key="FrameworkBundle" type="collection">
-        <parameter key="path">D:\tukifac_premium_prod\facturador_lycet\vendor\symfony\framework-bundle</parameter>
+        <parameter key="path">E:\tukifac\tukifac_premium\facturador_lycet\vendor\symfony\framework-bundle</parameter>
         <parameter key="namespace">Symfony\Bundle\FrameworkBundle</parameter>
       </parameter>
       <parameter key="NelmioCorsBundle" type="collection">
-        <parameter key="path">D:\tukifac_premium_prod\facturador_lycet\vendor\nelmio\cors-bundle</parameter>
+        <parameter key="path">E:\tukifac\tukifac_premium\facturador_lycet\vendor\nelmio\cors-bundle</parameter>
         <parameter key="namespace">Nelmio\CorsBundle</parameter>
       </parameter>
       <parameter key="JMSSerializerBundle" type="collection">
-        <parameter key="path">D:\tukifac_premium_prod\facturador_lycet\vendor\jms\serializer-bundle</parameter>
+        <parameter key="path">E:\tukifac\tukifac_premium\facturador_lycet\vendor\jms\serializer-bundle</parameter>
         <parameter key="namespace">JMS\SerializerBundle</parameter>
       </parameter>
       <parameter key="MonologBundle" type="collection">
-        <parameter key="path">D:\tukifac_premium_prod\facturador_lycet\vendor\symfony\monolog-bundle</parameter>
+        <parameter key="path">E:\tukifac\tukifac_premium\facturador_lycet\vendor\symfony\monolog-bundle</parameter>
         <parameter key="namespace">Symfony\Bundle\MonologBundle</parameter>
       </parameter>
       <parameter key="DoctrineBundle" type="collection">
-        <parameter key="path">D:\tukifac_premium_prod\facturador_lycet\vendor\doctrine\doctrine-bundle</parameter>
+        <parameter key="path">E:\tukifac\tukifac_premium\facturador_lycet\vendor\doctrine\doctrine-bundle</parameter>
         <parameter key="namespace">Doctrine\Bundle\DoctrineBundle</parameter>
       </parameter>
       <parameter key="DoctrineMigrationsBundle" type="collection">
-        <parameter key="path">D:\tukifac_premium_prod\facturador_lycet\vendor\doctrine\doctrine-migrations-bundle</parameter>
+        <parameter key="path">E:\tukifac\tukifac_premium\facturador_lycet\vendor\doctrine\doctrine-migrations-bundle</parameter>
         <parameter key="namespace">Doctrine\Bundle\MigrationsBundle</parameter>
       </parameter>
       <parameter key="SecurityBundle" type="collection">
-        <parameter key="path">D:\tukifac_premium_prod\facturador_lycet\vendor\symfony\security-bundle</parameter>
+        <parameter key="path">E:\tukifac\tukifac_premium\facturador_lycet\vendor\symfony\security-bundle</parameter>
         <parameter key="namespace">Symfony\Bundle\SecurityBundle</parameter>
       </parameter>
     </parameter>
@@ -53,10 +53,10 @@
     <parameter key="container.dumper.inline_factories">true</parameter>
     <parameter key="container.dumper.inline_class_loader">true</parameter>
     <parameter key="token">%env(CLIENT_TOKEN)%</parameter>
-    <parameter key="data_path">D:\tukifac_premium_prod\facturador_lycet/data</parameter>
-    <parameter key="fiscal.storage_path">D:\tukifac_premium_prod\facturador_lycet/var/fiscal_storage</parameter>
+    <parameter key="data_path">E:\tukifac\tukifac_premium\facturador_lycet/data</parameter>
+    <parameter key="fiscal.storage_path">E:\tukifac\tukifac_premium\facturador_lycet/var/fiscal_storage</parameter>
     <parameter key="fiscal.storage_public_url">http://localhost:8000/fiscal-files</parameter>
-    <parameter key="fiscal.templates_pdf_path">D:\tukifac_premium_prod\facturador_lycet/templates/pdf</parameter>
+    <parameter key="fiscal.templates_pdf_path">E:\tukifac\tukifac_premium\facturador_lycet/templates/pdf</parameter>
     <parameter key="env(validapse_url)">https://app.validapse.com</parameter>
     <parameter key="env(mail_from)">noreply@tukifac.com</parameter>
     <parameter key="env(fiscal_storage_driver)">local</parameter>
@@ -91,14 +91,14 @@
     <parameter key="kernel.trusted_headers">30</parameter>
     <parameter key="debug.file_link_format">null</parameter>
     <parameter key="debug.error_handler.throw_at">-1</parameter>
-    <parameter key="debug.container.dump">D:\tukifac_premium_prod\facturador_lycet\var\cache\dev/App_KernelDevDebugContainer.xml</parameter>
+    <parameter key="debug.container.dump">E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev/App_KernelDevDebugContainer.xml</parameter>
     <parameter key="router.request_context.host">localhost</parameter>
     <parameter key="router.request_context.scheme">http</parameter>
     <parameter key="router.request_context.base_url"></parameter>
     <parameter key="router.resource">kernel::loadRoutes</parameter>
     <parameter key="request_listener.http_port">80</parameter>
     <parameter key="request_listener.https_port">443</parameter>
-    <parameter key="cache.prefix.seed">_D:\tukifac_premium_prod\facturador_lycet.App_KernelDevDebugContainer</parameter>
+    <parameter key="cache.prefix.seed">_E:\tukifac\tukifac_premium\facturador_lycet.App_KernelDevDebugContainer</parameter>
     <parameter key="session.metadata.storage_key">_sf2_meta</parameter>
     <parameter key="session.storage.options" type="collection">
       <parameter key="cache_limiter" type="string">0</parameter>
@@ -233,7 +233,7 @@
     <parameter key="doctrine.orm.second_level_cache.regions_configuration.class">Doctrine\ORM\Cache\RegionsConfiguration</parameter>
     <parameter key="doctrine.orm.auto_generate_proxy_classes">true</parameter>
     <parameter key="doctrine.orm.enable_lazy_ghost_objects">false</parameter>
-    <parameter key="doctrine.orm.proxy_dir">D:\tukifac_premium_prod\facturador_lycet\var\cache\dev/doctrine/orm/Proxies</parameter>
+    <parameter key="doctrine.orm.proxy_dir">E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev/doctrine/orm/Proxies</parameter>
     <parameter key="doctrine.orm.proxy_namespace">Proxies</parameter>
     <parameter key="doctrine.migrations.preferred_em">null</parameter>
     <parameter key="doctrine.migrations.preferred_connection">null</parameter>
@@ -310,7 +310,7 @@
     <service id="App\Command\ImportEmpresasFromJsonCommand" class="App\Command\ImportEmpresasFromJsonCommand" autowire="true" autoconfigure="true">
       <tag name="console.command"/>
       <tag name="container.no_preload"/>
-      <argument>D:\tukifac_premium_prod\facturador_lycet/data</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet/data</argument>
       <argument type="service" id="doctrine.orm.default_entity_manager"/>
       <argument type="service" id="App\Repository\EmpresaRepository"/>
       <call method="setName">
@@ -331,7 +331,7 @@
       <tag name="controller.service_arguments"/>
     </service>
     <service id="App\Controller\FiscalFilesController" class="App\Controller\FiscalFilesController" autowire="true" autoconfigure="true">
-      <argument>D:\tukifac_premium_prod\facturador_lycet/var/fiscal_storage</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet/var/fiscal_storage</argument>
     </service>
     <service id="App\Controller\HomeController" class="App\Controller\HomeController" shared="false" public="true" autowire="true" autoconfigure="true">
       <tag name="controller.service_arguments"/>
@@ -490,7 +490,7 @@
     <service id="App\Report\FiscalHtmlReport" class="App\Report\FiscalHtmlReport" autowire="true" autoconfigure="true">
       <argument>%env(default::TEMPLATESPDF_PATH)%</argument>
       <argument type="collection">
-        <argument key="cache">D:\tukifac_premium_prod\facturador_lycet\var\cache\dev</argument>
+        <argument key="cache">E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev</argument>
         <argument key="strict_variables">true</argument>
       </argument>
     </service>
@@ -531,10 +531,12 @@
       <argument type="service" id="doctrine"/>
     </service>
     <service id="App\Service\AppDocumentValidator" class="App\Service\AppDocumentValidator" autowire="true" autoconfigure="true"/>
+    <service id="App\Service\DespatchDateNormalizer" class="App\Service\DespatchDateNormalizer" autowire="true" autoconfigure="true"/>
     <service id="App\Service\DocumentRequest" class="App\Service\DocumentRequest" autowire="true" autoconfigure="true">
       <argument type="service" id="request_stack"/>
       <argument type="service" id="App\Service\DocumentRequestParser"/>
       <argument type="service" id="service_container"/>
+      <argument type="service" id="App\Service\Fiscal\FiscalLogoResolver"/>
     </service>
     <service id="App\Service\DocumentRequestParser" class="App\Service\DocumentRequestParser" autowire="true" autoconfigure="true">
       <argument type="service" id="jms_serializer.serializer"/>
@@ -542,18 +544,19 @@
     <service id="App\Service\EmpresasService" class="App\Service\EmpresasService" autowire="true" autoconfigure="true">
       <argument type="service" id="App\Repository\EmpresaRepository"/>
       <argument type="service" id="doctrine.orm.default_entity_manager"/>
-      <argument>D:\tukifac_premium_prod\facturador_lycet/data</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet/data</argument>
       <argument type="service" id="monolog.logger"/>
     </service>
     <service id="App\Service\EnvConfigProvider" class="App\Service\EnvConfigProvider" autowire="true" autoconfigure="true"/>
     <service id="App\Service\FileConfigProvider" class="App\Service\FileConfigProvider" autowire="true" autoconfigure="true">
-      <argument>D:\tukifac_premium_prod\facturador_lycet/data</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet/data</argument>
       <argument type="service" id="App\Repository\EmpresaRepository"/>
     </service>
     <service id="App\Service\FileDataReader" class="App\Service\FileDataReader" public="true" autowire="true" autoconfigure="true">
-      <argument>D:\tukifac_premium_prod\facturador_lycet/data</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet/data</argument>
     </service>
     <service id="App\Service\Fiscal\CdrNormalizer" class="App\Service\Fiscal\CdrNormalizer" autowire="true" autoconfigure="true"/>
+    <service id="App\Service\Fiscal\DespatchSnapshotEnricher" class="App\Service\Fiscal\DespatchSnapshotEnricher" autowire="true" autoconfigure="true"/>
     <service id="App\Service\Fiscal\FiscalBulkActionService" class="App\Service\Fiscal\FiscalBulkActionService" autowire="true" autoconfigure="true">
       <argument type="service" id="App\Repository\FiscalDocumentRepository"/>
       <argument type="service" id="App\Service\Fiscal\FiscalQueueService"/>
@@ -588,7 +591,7 @@
       <argument type="service" id="jms_serializer.serializer"/>
       <argument type="service" id="doctrine.orm.default_entity_manager"/>
       <argument type="service" id="monolog.logger"/>
-      <argument>D:\tukifac_premium_prod\facturador_lycet/var/fiscal_storage</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet/var/fiscal_storage</argument>
     </service>
     <service id="App\Service\Fiscal\FiscalDocumentService" class="App\Service\Fiscal\FiscalDocumentService" autowire="true" autoconfigure="true">
       <argument type="service" id="doctrine.orm.default_entity_manager"/>
@@ -622,7 +625,7 @@
       <argument type="service" id="App\Service\Fiscal\FiscalDocumentPdfResolver"/>
     </service>
     <service id="App\Service\Fiscal\FiscalFileFetcher" class="App\Service\Fiscal\FiscalFileFetcher" autowire="true" autoconfigure="true">
-      <argument>D:\tukifac_premium_prod\facturador_lycet/var/fiscal_storage</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet/var/fiscal_storage</argument>
     </service>
     <service id="App\Service\Fiscal\FiscalFingerprint" class="App\Service\Fiscal\FiscalFingerprint" autowire="true" autoconfigure="true"/>
     <service id="App\Service\Fiscal\FiscalJobDispatcher" class="App\Service\Fiscal\FiscalJobDispatcher" autowire="true" autoconfigure="true">
@@ -636,7 +639,7 @@
     <service id="App\Service\Fiscal\FiscalLogoResolver" class="App\Service\Fiscal\FiscalLogoResolver" autowire="true" autoconfigure="true">
       <argument type="service" id="App\Repository\EmpresaRepository"/>
       <argument type="service" id="App\Service\FileDataReader"/>
-      <argument>D:\tukifac_premium_prod\facturador_lycet/data</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet/data</argument>
     </service>
     <service id="App\Service\Fiscal\FiscalMailerService" class="App\Service\Fiscal\FiscalMailerService" autowire="true" autoconfigure="true">
       <argument type="service" id="mailer.mailer"/>
@@ -666,6 +669,7 @@
       <argument type="service" id="App\Service\Fiscal\FiscalWebhookService"/>
       <argument type="service" id="App\Service\Fiscal\FiscalQueueService"/>
       <argument type="service" id="App\Service\SeeFactory"/>
+      <argument type="service" id="App\Service\SeeApiFactory"/>
       <argument type="service" id="monolog.logger"/>
       <argument type="service" id="App\Service\Fiscal\FiscalDocumentPdfResolver"/>
     </service>
@@ -684,6 +688,7 @@
       <argument type="service" id="App\Service\Fiscal\FiscalQueueService"/>
       <argument type="service" id="monolog.logger"/>
     </service>
+    <service id="App\Service\Fiscal\GreEmitRouting" class="App\Service\Fiscal\GreEmitRouting" autowire="true" autoconfigure="true"/>
     <service id="App\Service\Fiscal\Observability\FiscalAlertService" class="App\Service\Fiscal\Observability\FiscalAlertService" autowire="true" autoconfigure="true">
       <argument type="service" id="doctrine.orm.default_entity_manager"/>
       <argument type="service" id="App\Repository\FiscalAlertRepository"/>
@@ -729,8 +734,14 @@
     <service id="App\Service\Fiscal\Provider\FiscalProviderResolver" class="App\Service\Fiscal\Provider\FiscalProviderResolver" autowire="true" autoconfigure="true">
       <argument type="collection">
         <argument type="service" id="App\Service\Fiscal\Provider\ValidaPseProvider"/>
+        <argument type="service" id="App\Service\Fiscal\Provider\NubefactGreProvider"/>
         <argument type="service" id="App\Service\Fiscal\Provider\SunatDirectProvider"/>
       </argument>
+    </service>
+    <service id="App\Service\Fiscal\Provider\NubefactGreProvider" class="App\Service\Fiscal\Provider\NubefactGreProvider" autowire="true" autoconfigure="true">
+      <argument type="service" id="App\Service\SeeApiFactory"/>
+      <argument type="service" id="App\Service\FileConfigProvider"/>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet/data</argument>
     </service>
     <service id="App\Service\Fiscal\Provider\PseAuthBuilder" class="App\Service\Fiscal\Provider\PseAuthBuilder" autowire="true" autoconfigure="true"/>
     <service id="App\Service\Fiscal\Provider\PseProviderRegistry" class="App\Service\Fiscal\Provider\PseProviderRegistry" autowire="true" autoconfigure="true"/>
@@ -738,19 +749,19 @@
     <service id="App\Service\Fiscal\Provider\SunatCdrClassifier" class="App\Service\Fiscal\Provider\SunatCdrClassifier" autowire="true" autoconfigure="true"/>
     <service id="App\Service\Fiscal\Provider\SunatDirectProvider" class="App\Service\Fiscal\Provider\SunatDirectProvider" autowire="true" autoconfigure="true">
       <argument type="service" id="App\Service\SeeFactory"/>
-      <argument>D:\tukifac_premium_prod\facturador_lycet/data</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet/data</argument>
     </service>
     <service id="App\Service\Fiscal\Provider\ValidaPseProvider" class="App\Service\Fiscal\Provider\ValidaPseProvider" autowire="true" autoconfigure="true">
       <argument type="service" id="App\Service\Fiscal\Provider\PseAuthBuilder"/>
     </service>
     <service id="App\Service\Fiscal\Storage\LocalStorageDriver" class="App\Service\Fiscal\Storage\LocalStorageDriver" autowire="true" autoconfigure="true">
-      <argument>D:\tukifac_premium_prod\facturador_lycet/var/fiscal_storage</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet/var/fiscal_storage</argument>
       <argument>http://localhost:8000/fiscal-files</argument>
     </service>
     <service id="App\Service\Fiscal\Storage\S3CompatibleStorageDriver" class="App\Service\Fiscal\Storage\S3CompatibleStorageDriver" autowire="true" autoconfigure="true"/>
     <service id="App\Service\Fiscal\Storage\StorageDriverFactory" class="App\Service\Fiscal\Storage\StorageDriverFactory" autowire="true" autoconfigure="true">
       <argument>%env(default::FISCAL_STORAGE_DRIVER)%</argument>
-      <argument>D:\tukifac_premium_prod\facturador_lycet/var/fiscal_storage</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet/var/fiscal_storage</argument>
       <argument>http://localhost:8000/fiscal-files</argument>
       <argument>%env(default::FISCAL_S3_REGION)%</argument>
       <argument>%env(default::FISCAL_S3_ENDPOINT)%</argument>
@@ -772,13 +783,13 @@
         <argument>no-outline</argument>
         <argument>print-media-type</argument>
       </argument>
-      <argument>D:\tukifac_premium_prod\facturador_lycet</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet</argument>
     </service>
     <service id="App\Service\SeeApiFactory" class="App\Service\SeeApiFactory" public="true" autowire="true" autoconfigure="true">
       <argument type="service" id="App\Service\EnvConfigProvider"/>
       <argument type="service" id="App\Service\FileConfigProvider"/>
       <argument type="service" id="App\Service\FileDataReader"/>
-      <argument type="service" id="Greenter\Api"/>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev</argument>
     </service>
     <service id="App\Service\SeeFactory" class="App\Service\SeeFactory" public="true" autowire="true" autoconfigure="true">
       <argument type="service" id="App\Service\EnvConfigProvider"/>
@@ -804,7 +815,7 @@
     </service>
     <service id="Greenter\See" class="Greenter\See" public="true" autowire="true" autoconfigure="true">
       <call method="setCachePath">
-        <argument>D:\tukifac_premium_prod\facturador_lycet\var\cache\dev</argument>
+        <argument>E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev</argument>
       </call>
     </service>
     <service id="Greenter\Api" class="Greenter\Api" public="true" autowire="true" autoconfigure="true">
@@ -814,7 +825,7 @@
       </argument>
       <call method="setBuilderOptions">
         <argument type="collection">
-          <argument key="cache">D:\tukifac_premium_prod\facturador_lycet\var\cache\dev</argument>
+          <argument key="cache">E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev</argument>
         </argument>
       </call>
     </service>
@@ -890,7 +901,7 @@
       </argument>
     </service>
     <service id="http_cache.store" class="Symfony\Component\HttpKernel\HttpCache\Store">
-      <argument>D:\tukifac_premium_prod\facturador_lycet\var\cache\dev/http_cache</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev/http_cache</argument>
     </service>
     <service id="url_helper" class="Symfony\Component\HttpFoundation\UrlHelper">
       <argument type="service" id="request_stack"/>
@@ -900,7 +911,7 @@
       <tag name="container.no_preload"/>
       <argument type="tagged_iterator" tag="kernel.cache_warmer"/>
       <argument>true</argument>
-      <argument>D:\tukifac_premium_prod\facturador_lycet\var\cache\dev/App_KernelDevDebugContainerDeprecations.log</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev/App_KernelDevDebugContainerDeprecations.log</argument>
     </service>
     <service id="cache_clearer" class="Symfony\Component\HttpKernel\CacheClearer\ChainCacheClearer" public="true">
       <tag name="container.private" package="symfony/framework-bundle" version="5.2"/>
@@ -1059,7 +1070,7 @@
       </argument>
       <argument>UTF-8</argument>
       <argument type="service" id="debug.file_link_formatter" on-invalid="null"/>
-      <argument>D:\tukifac_premium_prod\facturador_lycet</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet</argument>
       <argument type="service">
         <service>
           <argument type="service" id="request_stack"/>
@@ -1092,7 +1103,7 @@
       <tag name="console.command"/>
       <tag name="container.no_preload"/>
       <argument type="service" id="filesystem"/>
-      <argument>D:\tukifac_premium_prod\facturador_lycet</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet</argument>
       <call method="setName">
         <argument>assets:install</argument>
       </call>
@@ -1255,7 +1266,7 @@
       <tag name="console.command"/>
       <tag name="container.no_preload"/>
       <argument>dev</argument>
-      <argument>D:\tukifac_premium_prod\facturador_lycet</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet</argument>
       <call method="setName">
         <argument>debug:dotenv</argument>
       </call>
@@ -1383,9 +1394,9 @@
     <service id="cache.app" class="Symfony\Component\Cache\Adapter\FilesystemAdapter" public="true">
       <tag name="cache.pool"/>
       <tag name="kernel.reset" method="reset"/>
-      <argument>hjkK7f1eS6</argument>
+      <argument>n4TPh2kn-O</argument>
       <argument>0</argument>
-      <argument>D:\tukifac_premium_prod\facturador_lycet\var\cache\dev/pools/app</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev/pools/app</argument>
       <argument type="service" id="cache.default_marshaller" on-invalid="ignore"/>
       <call method="setLogger">
         <argument type="service" id="monolog.logger.cache" on-invalid="ignore"/>
@@ -1397,50 +1408,50 @@
     <service id="cache.system" class="Symfony\Component\Cache\Adapter\AdapterInterface" public="true">
       <tag name="cache.pool"/>
       <tag name="kernel.reset" method="reset"/>
-      <argument>2V8oaM+pX1</argument>
+      <argument>sSH1Sl3C1t</argument>
       <argument>0</argument>
       <argument>%container.build_id%</argument>
-      <argument>D:\tukifac_premium_prod\facturador_lycet\var\cache\dev/pools/system</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev/pools/system</argument>
       <argument type="service" id="monolog.logger.cache" on-invalid="ignore"/>
       <factory class="Symfony\Component\Cache\Adapter\AbstractAdapter" method="createSystemCache"/>
     </service>
     <service id="cache.validator" class="Symfony\Component\Cache\Adapter\AdapterInterface">
       <tag name="cache.pool"/>
       <tag name="kernel.reset" method="reset"/>
-      <argument>XNI-I85KRR</argument>
+      <argument>8vialJoEGB</argument>
       <argument>0</argument>
       <argument>%container.build_id%</argument>
-      <argument>D:\tukifac_premium_prod\facturador_lycet\var\cache\dev/pools/system</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev/pools/system</argument>
       <argument type="service" id="monolog.logger.cache" on-invalid="ignore"/>
       <factory class="Symfony\Component\Cache\Adapter\AbstractAdapter" method="createSystemCache"/>
     </service>
     <service id="cache.serializer" class="Symfony\Component\Cache\Adapter\AdapterInterface">
       <tag name="cache.pool"/>
       <tag name="kernel.reset" method="reset"/>
-      <argument>xX9E5IxTSO</argument>
+      <argument>OsNPTNPEc9</argument>
       <argument>0</argument>
       <argument>%container.build_id%</argument>
-      <argument>D:\tukifac_premium_prod\facturador_lycet\var\cache\dev/pools/system</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev/pools/system</argument>
       <argument type="service" id="monolog.logger.cache" on-invalid="ignore"/>
       <factory class="Symfony\Component\Cache\Adapter\AbstractAdapter" method="createSystemCache"/>
     </service>
     <service id="cache.annotations" class="Symfony\Component\Cache\Adapter\AdapterInterface">
       <tag name="cache.pool"/>
       <tag name="kernel.reset" method="reset"/>
-      <argument>3mVfYGNhOK</argument>
+      <argument>LwRQbAezGn</argument>
       <argument>0</argument>
       <argument>%container.build_id%</argument>
-      <argument>D:\tukifac_premium_prod\facturador_lycet\var\cache\dev/pools/system</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev/pools/system</argument>
       <argument type="service" id="monolog.logger.cache" on-invalid="ignore"/>
       <factory class="Symfony\Component\Cache\Adapter\AbstractAdapter" method="createSystemCache"/>
     </service>
     <service id="cache.property_info" class="Symfony\Component\Cache\Adapter\AdapterInterface">
       <tag name="cache.pool"/>
       <tag name="kernel.reset" method="reset"/>
-      <argument>yj3vZczgG7</argument>
+      <argument>bUte4iG093</argument>
       <argument>0</argument>
       <argument>%container.build_id%</argument>
-      <argument>D:\tukifac_premium_prod\facturador_lycet\var\cache\dev/pools/system</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev/pools/system</argument>
       <argument type="service" id="monolog.logger.cache" on-invalid="ignore"/>
       <factory class="Symfony\Component\Cache\Adapter\AbstractAdapter" method="createSystemCache"/>
     </service>
@@ -1450,7 +1461,7 @@
       <argument></argument>
       <argument>0</argument>
       <argument>%container.build_id%</argument>
-      <argument>D:\tukifac_premium_prod\facturador_lycet\var\cache\dev/pools/system</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev/pools/system</argument>
       <argument type="service" id="monolog.logger.cache" on-invalid="ignore"/>
       <factory class="Symfony\Component\Cache\Adapter\AbstractAdapter" method="createSystemCache"/>
     </service>
@@ -1480,7 +1491,7 @@
       <tag name="monolog.logger" channel="cache"/>
       <argument></argument>
       <argument>0</argument>
-      <argument>D:\tukifac_premium_prod\facturador_lycet\var\cache\dev/pools/app</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev/pools/app</argument>
       <argument type="service" id="cache.default_marshaller" on-invalid="ignore"/>
       <call method="setLogger">
         <argument type="service" id="monolog.logger.cache" on-invalid="ignore"/>
@@ -2114,7 +2125,7 @@
       <argument type="service" id=".service_locator.jL3MFBM.router.default"/>
       <argument>kernel::loadRoutes</argument>
       <argument type="collection">
-        <argument key="cache_dir">D:\tukifac_premium_prod\facturador_lycet\var\cache\dev</argument>
+        <argument key="cache_dir">E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev</argument>
         <argument key="debug">true</argument>
         <argument key="generator_class">Symfony\Component\Routing\Generator\CompiledUrlGenerator</argument>
         <argument key="generator_dumper_class">Symfony\Component\Routing\Generator\Dumper\CompiledUrlGeneratorDumper</argument>
@@ -2153,7 +2164,7 @@
       <argument type="service" id="request_stack"/>
       <argument type="service" id="router.request_context" on-invalid="ignore"/>
       <argument type="service" id="monolog.logger.request" on-invalid="ignore"/>
-      <argument>D:\tukifac_premium_prod\facturador_lycet</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet</argument>
       <argument>true</argument>
     </service>
     <service id="Symfony\Bundle\FrameworkBundle\Controller\RedirectController" class="Symfony\Bundle\FrameworkBundle\Controller\RedirectController" public="true">
@@ -2221,13 +2232,13 @@
     <service id="annotations.cache_warmer" class="Symfony\Bundle\FrameworkBundle\CacheWarmer\AnnotationsCacheWarmer">
       <tag name="kernel.cache_warmer"/>
       <argument type="service" id="annotations.reader"/>
-      <argument>D:\tukifac_premium_prod\facturador_lycet\var\cache\dev/annotations.php</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev/annotations.php</argument>
       <argument>#^Symfony\\(?:Component\\HttpKernel\\|Bundle\\FrameworkBundle\\Controller\\(?!.*Controller$))#</argument>
       <argument>true</argument>
     </service>
     <service id="annotations.cache_adapter" class="Symfony\Component\Cache\Adapter\PhpArrayAdapter">
       <tag name="container.hot_path"/>
-      <argument>D:\tukifac_premium_prod\facturador_lycet\var\cache\dev/annotations.php</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev/annotations.php</argument>
       <argument type="service" id="cache.annotations"/>
       <factory class="Symfony\Component\Cache\Adapter\PhpArrayAdapter" method="create"/>
     </service>
@@ -2245,7 +2256,7 @@
     </service>
     <service id="secrets.vault" class="Symfony\Bundle\FrameworkBundle\Secrets\SodiumVault">
       <tag name="container.env_var_loader"/>
-      <argument>D:\tukifac_premium_prod\facturador_lycet/config/secrets/%env(default:kernel.environment:APP_RUNTIME_ENV)%</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet/config/secrets/%env(default:kernel.environment:APP_RUNTIME_ENV)%</argument>
       <argument type="service" id="secrets.decryption_key" on-invalid="ignore"/>
     </service>
     <service id="secrets.decryption_key" class="Symfony\Component\String\LazyString">
@@ -2254,7 +2265,7 @@
       <factory class="Symfony\Component\String\LazyString" method="fromCallable"/>
     </service>
     <service id="secrets.local_vault" class="Symfony\Bundle\FrameworkBundle\Secrets\DotenvVault">
-      <argument>D:\tukifac_premium_prod\facturador_lycet/.env.dev.local</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet/.env.dev.local</argument>
     </service>
     <service id="property_info" class="Symfony\Component\PropertyInfo\PropertyInfoExtractor">
       <argument type="iterator">
@@ -2331,7 +2342,7 @@
       <argument>true</argument>
     </service>
     <service id="session.storage.factory.mock_file" class="Symfony\Component\HttpFoundation\Session\Storage\MockFileSessionStorageFactory">
-      <argument>D:\tukifac_premium_prod\facturador_lycet\var\cache\dev/sessions</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev/sessions</argument>
       <argument>MOCKSESSID</argument>
       <argument type="service">
         <service class="Symfony\Component\HttpFoundation\Session\Storage\MetadataBag">
@@ -2601,7 +2612,7 @@
       <tag name="jms_serializer.subscribing_handler"/>
       <tag name="default">jms_serializer.instance</tag>
       <argument>Y-m-d\TH:i:sP</argument>
-      <argument>Europe/Berlin</argument>
+      <argument>UTC</argument>
       <argument>true</argument>
       <argument type="collection">
         <argument>Y-m-d\TH:i:sP</argument>
@@ -2669,7 +2680,7 @@
     </service>
     <service id="jms_serializer.metadata.cache.file_cache" class="Metadata\Cache\FileCache">
       <tag name="default">jms_serializer.instance</tag>
-      <argument>D:\tukifac_premium_prod\facturador_lycet\var\cache\dev/jms_serializer_default</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev/jms_serializer_default</argument>
     </service>
     <service id="jms_serializer.version_exclusion_strategy" class="JMS\Serializer\Exclusion\VersionExclusionStrategy" abstract="true">
       <tag name="default">jms_serializer.instance</tag>
@@ -2789,7 +2800,7 @@
       <tag name="default">jms_serializer.instance</tag>
       <argument>default</argument>
       <argument type="collection">
-        <argument key="Greenter\Model">D:/tukifac_premium_prod/facturador_lycet/config/serializer</argument>
+        <argument key="Greenter\Model">E:/tukifac/tukifac_premium/facturador_lycet/config/serializer</argument>
       </argument>
       <argument type="service" id="jms_serializer.event_dispatcher"/>
       <argument type="service" id="jms_serializer.traceable_handler_registry"/>
@@ -3413,7 +3424,7 @@
     <service id="monolog.processor.psr_log_message" class="Monolog\Processor\PsrLogMessageProcessor"/>
     <service id="monolog.handler.main" class="Monolog\Handler\StreamHandler">
       <tag name="kernel.reset" method="reset"/>
-      <argument>D:\tukifac_premium_prod\facturador_lycet\var\log/dev.log</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet\var\log/dev.log</argument>
       <argument>debug</argument>
       <argument>true</argument>
       <argument>null</argument>
@@ -3584,7 +3595,7 @@
       <argument type="service" id="doctrine.debug_data_holder"/>
       <argument type="service" id="debug.stopwatch" on-invalid="null"/>
     </service>
-    <service id=".1_ServiceLocator~UUEoc9L" class="Symfony\Component\DependencyInjection\ServiceLocator">
+    <service id=".1_ServiceLocator~8nftFpz" class="Symfony\Component\DependencyInjection\ServiceLocator">
       <argument type="collection"/>
     </service>
     <service id="doctrine.orm.proxy_cache_warmer" class="Symfony\Bridge\Doctrine\CacheWarmer\ProxyCacheWarmer">
@@ -3793,7 +3804,7 @@
         <argument type="service" id=".doctrine.orm.default_metadata_driver"/>
       </call>
       <call method="setProxyDir">
-        <argument>D:\tukifac_premium_prod\facturador_lycet\var\cache\dev/doctrine/orm/Proxies</argument>
+        <argument>E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev/doctrine/orm/Proxies</argument>
       </call>
       <call method="setProxyNamespace">
         <argument>Proxies</argument>
@@ -3835,7 +3846,7 @@
     <service id="doctrine.orm.default_annotation_metadata_driver" class="Doctrine\ORM\Mapping\Driver\AnnotationDriver">
       <argument type="service" id="annotations.cached_reader"/>
       <argument type="collection">
-        <argument>D:\tukifac_premium_prod\facturador_lycet\src\Entity</argument>
+        <argument>E:\tukifac\tukifac_premium\facturador_lycet\src\Entity</argument>
       </argument>
       <argument>false</argument>
     </service>
@@ -3895,7 +3906,7 @@
     <service id="doctrine.migrations.configuration" class="Doctrine\Migrations\Configuration\Configuration">
       <call method="addMigrationsDirectory">
         <argument>DoctrineMigrations</argument>
-        <argument>D:\tukifac_premium_prod\facturador_lycet/migrations</argument>
+        <argument>E:\tukifac\tukifac_premium\facturador_lycet/migrations</argument>
       </call>
       <call method="setAllOrNothing">
         <argument>false</argument>
@@ -4234,10 +4245,10 @@
     <service id="cache.security_expression_language" class="Symfony\Component\Cache\Adapter\AdapterInterface">
       <tag name="cache.pool"/>
       <tag name="kernel.reset" method="reset"/>
-      <argument>UVFKPTEOMn</argument>
+      <argument>ebcjMNB5Td</argument>
       <argument>0</argument>
       <argument>%container.build_id%</argument>
-      <argument>D:\tukifac_premium_prod\facturador_lycet\var\cache\dev/pools/system</argument>
+      <argument>E:\tukifac\tukifac_premium\facturador_lycet\var\cache\dev/pools/system</argument>
       <argument type="service" id="monolog.logger.cache" on-invalid="ignore"/>
       <factory class="Symfony\Component\Cache\Adapter\AbstractAdapter" method="createSystemCache"/>
     </service>
@@ -5584,7 +5595,7 @@
     </service>
     <service id="jms_serializer.metadata.traceable_file_locator.inner" class="Metadata\Driver\FileLocator">
       <argument type="collection">
-        <argument key="Greenter\Model">D:/tukifac_premium_prod/facturador_lycet/config/serializer</argument>
+        <argument key="Greenter\Model">E:/tukifac/tukifac_premium/facturador_lycet/config/serializer</argument>
       </argument>
     </service>
     <service id=".errored..service_locator.xUrKPVU.Symfony\Component\Config\Loader\LoaderInterface" class="Symfony\Component\Config\Loader\LoaderInterface"/>

@@ -42,6 +42,7 @@
         <option value="07">Nota de crédito (07)</option>
         <option value="08">Nota de débito (08)</option>
         <option value="09">Guía de remisión (09)</option>
+        <option value="31">Guía transportista (31)</option>
         <option value="RC">Resumen diario (RC)</option>
         <option value="RA">Comunicación de baja (RA)</option>
       </select>
@@ -93,6 +94,8 @@
       <p id="selHint" class="hint-muted">Seleccione una fila de la tabla</p>
       <div id="detailBox" style="display:none">
         <div id="badges"></div>
+        <div id="sunatOutcome" class="sunat-outcome" style="display:none" aria-live="polite"></div>
+        <div id="docMeta" class="doc-meta"></div>
         <div class="actions">
           <button class="btn btn-indigo" id="btnResend" type="button">Reenviar</button>
           <button class="btn btn-amber" id="btnRetry" type="button">Reintentar</button>
@@ -115,7 +118,10 @@
           <iframe id="pdfPreview" class="pdf-preview" title="Vista previa comprobante PDF"></iframe>
         </div>
         <h3>Timeline</h3><div class="timeline" id="timeline"></div>
-        <h3>Intentos</h3><pre id="attempts"></pre>
+        <h3>Intentos de emisión</h3>
+        <div id="attemptsTable"></div>
+        <p id="attemptsNote" class="hint-muted" style="display:none"></p>
+        <details class="json-fold"><summary>JSON intentos</summary><pre id="attempts"></pre></details>
         <h3>Emails</h3><pre id="emails"></pre>
         <h3>Webhooks</h3><pre id="webhooks"></pre>
         <h3>JSON</h3><pre id="jsonDetail"></pre>
@@ -142,9 +148,123 @@
       '07':'NOTA DE CRÉDITO',
       '08':'NOTA DE DÉBITO',
       '09':'GUÍA DE REMISIÓN',
+      '31':'GUÍA TRANSPORTISTA',
+      '20':'RETENCIÓN',
+      '40':'PERCEPCIÓN',
       'RC':'RESUMEN DIARIO',
       'RA':'COMUNICACIÓN DE BAJA'
     };
+
+    function escapeHtml(s){
+      return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function pipelineLabel(st){
+      const key=String(st||'').toLowerCase();
+      if(key==='accepted'||key==='observed')return'SUNAT_ACCEPTED';
+      if(key==='rejected')return'SUNAT_REJECTED';
+      if(key==='sent')return'TICKET_PENDING';
+      if(key==='error')return'EMIT_ERROR';
+      if(key==='queued'||key==='sending'||key==='retrying')return'IN_FLIGHT';
+      return key?key.toUpperCase():'—';
+    }
+
+    function renderSunatOutcome(doc){
+      const box=qs('sunatOutcome');
+      const st=String(doc.status||'').toLowerCase();
+      const code=doc.sunat_code;
+      const msg=doc.sunat_message;
+      const show=st==='rejected'||st==='accepted'||st==='observed'||st==='error'||st==='sent'||code||msg;
+      if(!show){
+        box.style.display='none';
+        box.innerHTML='';
+        return;
+      }
+      box.style.display='block';
+      box.className='sunat-outcome';
+      if(st==='rejected') box.classList.add('sunat-outcome--reject');
+      else if(st==='accepted'||st==='observed') box.classList.add('sunat-outcome--ok');
+      else if(st==='error') box.classList.add('sunat-outcome--error');
+      else if(st==='sent') box.classList.add('sunat-outcome--warn');
+
+      let title='Respuesta SUNAT';
+      if(st==='rejected') title='Rechazado por SUNAT';
+      else if(st==='observed') title='Aceptado con observaciones';
+      else if(st==='accepted') title='Aceptado por SUNAT';
+      else if(st==='error') title='Error de emisión';
+      else if(st==='sent') title='Enviado — consulta de ticket pendiente o en curso';
+
+      box.innerHTML=`
+        <h3 class="sunat-outcome__title">${escapeHtml(title)}</h3>
+        <div class="sunat-outcome__grid">
+          <div><span class="lbl">Estado documento</span><strong>${escapeHtml(statusText(doc.status))}</strong></div>
+          <div><span class="lbl">Pipeline</span><code>${escapeHtml(pipelineLabel(st))}</code></div>
+          ${code?`<div><span class="lbl">Código SUNAT / CDR</span><code class="sunat-code">${escapeHtml(code)}</code></div>`:''}
+          ${doc.ticket?`<div class="span-2"><span class="lbl">Ticket GRE</span><code class="ticket">${escapeHtml(doc.ticket)}</code></div>`:''}
+        </div>
+        ${msg?`<p class="sunat-outcome__msg">${escapeHtml(msg)}</p>`:''}`;
+    }
+
+    function renderDocMeta(doc){
+      const el=qs('docMeta');
+      el.innerHTML=`
+        <div class="doc-meta__grid">
+          <div><span class="lbl">Documento</span>${escapeHtml(documentText(doc.document_type,doc.series,doc.number))}</div>
+          <div><span class="lbl">Tenant</span>${escapeHtml(doc.tenant_slug||'—')}</div>
+          <div><span class="lbl">Venta ERP</span>${doc.sale_id??'—'}</div>
+          <div><span class="lbl">UUID</span><code class="small">${escapeHtml(doc.document_uuid||'')}</code></div>
+        </div>`;
+    }
+
+    function formatTimelineEvent(ev){
+      const t=String(ev.type||'');
+      if(t==='rejected'){
+        return `<div class="tl-item tl-reject"><strong>Rechazado por SUNAT</strong> <span class="tl-at">${formatDate(ev.at)}</span>
+          ${ev.sunat_code?`<div class="tl-line">Código: <code>${escapeHtml(ev.sunat_code)}</code></div>`:''}
+          ${ev.sunat_message?`<div class="tl-msg">${escapeHtml(ev.sunat_message)}</div>`:''}</div>`;
+      }
+      if(t==='accepted'){
+        return `<div class="tl-item tl-ok"><strong>Aceptado</strong> <span class="tl-at">${formatDate(ev.at)}</span>
+          ${ev.sunat_code?`<div class="tl-line">Código: <code>${escapeHtml(ev.sunat_code)}</code></div>`:''}</div>`;
+      }
+      if(t==='emit_attempt'){
+        const sc=ev.sunat_code?` · SUNAT ${escapeHtml(ev.sunat_code)}`:'';
+        const sm=ev.sunat_message?`<div class="tl-msg">${escapeHtml(ev.sunat_message)}</div>`:(ev.error?`<div class="tl-msg">${escapeHtml(ev.error)}</div>`:'');
+        return `<div class="tl-item"><strong>Intento #${ev.attempt||'?'}</strong> ${escapeHtml(ev.status||'')} (${escapeHtml(ev.provider||'—')})${sc}
+          <span class="tl-at">${formatDate(ev.at)}</span>${sm}</div>`;
+      }
+      return `<div class="tl-item"><strong>${escapeHtml(t)}</strong> <span class="tl-at">${formatDate(ev.at)}</span></div>`;
+    }
+
+    function renderAttemptsTable(doc, attempts){
+      const note=qs('attemptsNote');
+      const wrap=qs('attemptsTable');
+      if(!attempts.length){
+        wrap.innerHTML='<p class="hint-muted">Sin intentos registrados.</p>';
+        note.style.display='none';
+        return;
+      }
+      const docSt=String(doc.status||'').toLowerCase();
+      const last=attempts[attempts.length-1];
+      if(docSt==='rejected'&&String(last.status||'').toLowerCase()==='sent'){
+        note.style.display='block';
+        note.textContent='El último intento quedó en «sent» (ticket emitido). El rechazo SUNAT proviene de la consulta del ticket (poll), no de la emisión inicial — véase «Respuesta SUNAT» arriba.';
+      }else{
+        note.style.display='none';
+        note.textContent='';
+      }
+      wrap.innerHTML=`<table class="mini-table"><thead><tr>
+        <th>#</th><th>Proveedor</th><th>Estado intento</th><th>Cód. SUNAT</th><th>Mensaje</th><th>Duración</th><th>Fecha</th>
+      </tr></thead><tbody>${attempts.map(a=>`<tr>
+        <td>${a.attempt_number??'—'}</td>
+        <td>${escapeHtml(a.provider||'—')}</td>
+        <td>${escapeHtml(a.status||'—')}</td>
+        <td>${a.sunat_code?`<code>${escapeHtml(a.sunat_code)}</code>`:'—'}</td>
+        <td class="cell-msg">${escapeHtml(a.sunat_message||a.error_message||a.pse_message||'—')}</td>
+        <td>${a.duration_ms!=null?a.duration_ms+' ms':'—'}</td>
+        <td>${formatDate(a.created_at)}</td>
+      </tr>`).join('')}</tbody></table>`;
+    }
 
     function formatDate(d){
       const dt=new Date(d);
@@ -228,7 +348,10 @@
           <td>${d.tenant_slug||'—'}</td>
           <td>${ambienteText(d.company_environment)}</td>
           <td>${documentText(d.document_type,d.series,d.number)}</td>
-          <td><span class="badge ${badgeClass(d.status)}">${statusText(d.status)}</span></td>
+          <td>
+            <span class="badge ${badgeClass(d.status)}">${statusText(d.status)}</span>
+            ${d.sunat_code?`<div class="cell-sub cell-sub--err" title="${escapeHtml(d.sunat_message||'')}">SUNAT ${escapeHtml(d.sunat_code)}</div>`:''}
+          </td>
           <td>${d.send_mode||'—'}</td>
           <td>${d.provider||'—'}</td>
           <td><button class="btn btn-indigo btn-xs" type="button" data-open="${d.document_uuid}">Ver detalle</button></td>
@@ -269,7 +392,11 @@
         <span class="badge">${doc.provider||'—'}</span>
         ${pdfBadge}`;
 
-      qs('timeline').innerHTML=(d.timeline||[]).map(ev=>`<div><strong>${ev.type}</strong> ${ev.at}<br><small>${JSON.stringify(ev)}</small></div>`).join('');
+      renderSunatOutcome(doc);
+      renderDocMeta(doc);
+
+      qs('timeline').innerHTML=(d.timeline||[]).map(formatTimelineEvent).join('')||'<p class="hint-muted">Sin eventos.</p>';
+      renderAttemptsTable(doc, d.attempts||[]);
       qs('attempts').textContent=JSON.stringify(d.attempts||[],null,2);
       qs('emails').textContent=JSON.stringify(d.email_logs||[],null,2);
       qs('webhooks').textContent=JSON.stringify(d.webhook_events||[],null,2);

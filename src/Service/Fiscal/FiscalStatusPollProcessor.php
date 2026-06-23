@@ -4,11 +4,15 @@ declare(strict_types=1);
 
 namespace App\Service\Fiscal;
 
+use App\Entity\Empresa;
 use App\Entity\FiscalDocument;
 use App\Repository\EmpresaRepository;
 use App\Repository\FiscalDocumentRepository;
+use App\Service\Fiscal\GreEmitRouting;
+use App\Service\SeeApiFactory;
 use App\Service\SeeFactory;
 use Doctrine\ORM\EntityManagerInterface;
+use Greenter\Model\Despatch\Despatch;
 use Greenter\Model\Summary\Summary;
 use Greenter\Model\Voided\Reversion;
 use Greenter\Model\Voided\Voided;
@@ -28,6 +32,7 @@ class FiscalStatusPollProcessor
     private FiscalWebhookService $webhook;
     private FiscalQueueService $queue;
     private SeeFactory $seeFactory;
+    private SeeApiFactory $seeApiFactory;
     private LoggerInterface $logger;
     private ?FiscalDocumentPdfResolver $pdfResolver;
 
@@ -40,6 +45,7 @@ class FiscalStatusPollProcessor
         FiscalWebhookService $webhook,
         FiscalQueueService $queue,
         SeeFactory $seeFactory,
+        SeeApiFactory $seeApiFactory,
         LoggerInterface $logger,
         ?FiscalDocumentPdfResolver $pdfResolver = null
     ) {
@@ -51,6 +57,7 @@ class FiscalStatusPollProcessor
         $this->webhook = $webhook;
         $this->queue = $queue;
         $this->seeFactory = $seeFactory;
+        $this->seeApiFactory = $seeApiFactory;
         $this->logger = $logger;
         $this->pdfResolver = $pdfResolver;
     }
@@ -71,15 +78,15 @@ class FiscalStatusPollProcessor
                 return;
             }
 
-            $see = $this->seeFactory->build($class, $ruc);
+            $see = $this->buildStatusClient($doc, $class, $ruc);
             $result = $see->getStatus($doc->getTicket());
             if (!method_exists($result, 'isSuccess') || !$result->isSuccess()) {
-                $this->scheduleRetry($doc, $attempt);
+                $this->applyStatusPollFailure($doc, $result, $attempt);
                 return;
             }
 
-            $signedXml = '';
-            if (method_exists($see, 'getFactory')) {
+            $signedXml = (string) $see->getLastXml();
+            if ($signedXml === '' && method_exists($see, 'getFactory')) {
                 $signedXml = (string) $see->getFactory()->getLastXml();
             }
             $cdrZip = null;
@@ -149,6 +156,21 @@ class FiscalStatusPollProcessor
     }
 
     /**
+     * Guías GRE (09/31) enviadas por API REST: poll vía SeeApiFactory (NubeFact pruebas / SUNAT prod).
+     */
+    private function buildStatusClient(FiscalDocument $doc, string $class, string $ruc): object
+    {
+        if ($class === Despatch::class || in_array(strtoupper(trim($doc->getDocumentType())), ['09', '31'], true)) {
+            $empresa = $this->empresaRepo->find($ruc);
+            if ($empresa instanceof Empresa && GreEmitRouting::shouldUseGreRestApi($doc, $empresa)) {
+                return $this->seeApiFactory->build($ruc);
+            }
+        }
+
+        return $this->seeFactory->build($class, $ruc);
+    }
+
+    /**
      * @return array{0: string, 1: object, 2: string}
      */
     private function deserialize(FiscalDocument $doc): array
@@ -164,6 +186,40 @@ class FiscalStatusPollProcessor
         $greenterDoc = $this->serializer->deserialize(json_encode($data), $class, 'json');
         $ruc = trim((string) $greenterDoc->getCompany()->getRuc());
         return [$class, $greenterDoc, $ruc];
+    }
+
+    private function applyStatusPollFailure(FiscalDocument $doc, object $result, int $attempt): void
+    {
+        $code = '';
+        $message = '';
+        if (method_exists($result, 'getError') && $result->getError()) {
+            $err = $result->getError();
+            if (method_exists($err, 'getCode')) {
+                $code = trim((string) $err->getCode());
+            }
+            if (method_exists($err, 'getMessage')) {
+                $message = trim((string) $err->getMessage());
+            }
+        }
+        if ($code !== '' && $code !== '500' && $code !== '99') {
+            $doc->setStatus(FiscalDocument::STATUS_REJECTED);
+            $doc->setSunatCode($code);
+            $doc->setSunatMessage($message);
+            $doc->setRejectedAt(new \DateTimeImmutable());
+            $this->em->flush();
+            $this->notifyOrEnqueueSync($doc);
+            return;
+        }
+        if ($message !== '' && preg_match('/\b(2[0-9]{3}|3[0-9]{3}|4[0-9]{3})\b/', $message, $m)) {
+            $doc->setStatus(FiscalDocument::STATUS_REJECTED);
+            $doc->setSunatCode($m[1]);
+            $doc->setSunatMessage($message);
+            $doc->setRejectedAt(new \DateTimeImmutable());
+            $this->em->flush();
+            $this->notifyOrEnqueueSync($doc);
+            return;
+        }
+        $this->scheduleRetry($doc, $attempt);
     }
 
     private function scheduleRetry(FiscalDocument $doc, int $attempt): void
