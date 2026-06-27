@@ -6,6 +6,7 @@ namespace App\Command;
 
 use App\Service\Fiscal\FiscalEmailProcessor;
 use App\Service\Fiscal\FiscalEmitProcessor;
+use App\Service\Fiscal\FiscalOrphanRepairService;
 use App\Service\Fiscal\FiscalQueueService;
 use App\Service\Fiscal\FiscalStatusPollProcessor;
 use App\Service\Fiscal\FiscalWebhookSyncProcessor;
@@ -28,6 +29,14 @@ class FiscalWorkerCommand extends Command
     private FiscalWebhookSyncProcessor $webhookSyncProcessor;
     private FiscalStatusPollProcessor $statusPollProcessor;
     private FiscalAuditService $audit;
+    private FiscalOrphanRepairService $orphanRepair;
+    private ?int $lastOrphanRepairAt = null;
+
+    /** Segundos entre barridos de huérfanos cuando la cola emit está vacía. */
+    private const ORPHAN_REPAIR_INTERVAL_SEC = 60;
+
+    /** Máximo de huérfanos re-encolados por barrido. */
+    private const ORPHAN_REPAIR_BATCH = 40;
 
     public function __construct(
         FiscalQueueService $queue,
@@ -35,7 +44,8 @@ class FiscalWorkerCommand extends Command
         FiscalEmailProcessor $emailProcessor,
         FiscalWebhookSyncProcessor $webhookSyncProcessor,
         FiscalStatusPollProcessor $statusPollProcessor,
-        FiscalAuditService $audit
+        FiscalAuditService $audit,
+        FiscalOrphanRepairService $orphanRepair
     ) {
         parent::__construct();
         $this->queue = $queue;
@@ -44,6 +54,7 @@ class FiscalWorkerCommand extends Command
         $this->webhookSyncProcessor = $webhookSyncProcessor;
         $this->statusPollProcessor = $statusPollProcessor;
         $this->audit = $audit;
+        $this->orphanRepair = $orphanRepair;
     }
 
     protected function configure(): void
@@ -66,6 +77,7 @@ class FiscalWorkerCommand extends Command
 
         do {
             $this->processDueRetries($output);
+            $this->repairOrphansIfIdle($output);
             $this->queue->touchWorkerHeartbeat();
             $drained = $this->audit->drainQueue(80);
             if ($drained > 0) {
@@ -165,6 +177,30 @@ class FiscalWorkerCommand extends Command
                 'document_uuid' => $uuid,
                 'attempt' => 1,
             ]);
+        }
+    }
+
+    /**
+     * Si fiscal:emit está vacía, re-encola huérfanos de BD (queued sin job Redis).
+     * Evita intervención manual tras flush de Redis o inconsistencias de deploy.
+     */
+    private function repairOrphansIfIdle(OutputInterface $output): void
+    {
+        if ($this->queue->queueLength(FiscalQueueService::QUEUE_EMIT) > 0) {
+            return;
+        }
+
+        $now = time();
+        if ($this->lastOrphanRepairAt !== null
+            && ($now - $this->lastOrphanRepairAt) < self::ORPHAN_REPAIR_INTERVAL_SEC
+        ) {
+            return;
+        }
+
+        $this->lastOrphanRepairAt = $now;
+        $requeued = $this->orphanRepair->repairBatch(self::ORPHAN_REPAIR_BATCH, 120);
+        if ($requeued > 0) {
+            $output->writeln('<comment>Orphan repair: re-encolados ' . $requeued . ' documento(s)</comment>');
         }
     }
 }

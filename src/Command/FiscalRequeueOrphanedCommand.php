@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace App\Command;
 
+use App\Entity\FiscalDocument;
 use App\Repository\FiscalDocumentRepository;
-use App\Service\Fiscal\FiscalDocumentService;
+use App\Service\Fiscal\FiscalOrphanRepairService;
 use App\Service\Fiscal\FiscalQueueService;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -21,17 +22,17 @@ class FiscalRequeueOrphanedCommand extends Command
     protected static $defaultName = 'app:fiscal:requeue-orphaned';
 
     private FiscalDocumentRepository $repo;
-    private FiscalDocumentService $documentService;
+    private FiscalOrphanRepairService $orphanRepair;
     private FiscalQueueService $queue;
 
     public function __construct(
         FiscalDocumentRepository $repo,
-        FiscalDocumentService $documentService,
+        FiscalOrphanRepairService $orphanRepair,
         FiscalQueueService $queue
     ) {
         parent::__construct();
         $this->repo = $repo;
-        $this->documentService = $documentService;
+        $this->orphanRepair = $orphanRepair;
         $this->queue = $queue;
     }
 
@@ -64,53 +65,31 @@ class FiscalRequeueOrphanedCommand extends Command
         }
 
         $io->writeln(sprintf('Encontrados %d documento(s) huérfano(s):', count($orphans)));
-
-        $requeued = 0;
         foreach ($orphans as $doc) {
-            $line = sprintf(
-                '  id=%d uuid=%s tenant=%d sale=%d status=%s queued_at=%s',
-                $doc->getId(),
-                $doc->getDocumentUuid(),
-                $doc->getTenantId(),
-                $doc->getSaleId(),
-                $doc->getStatus(),
-                $doc->getQueuedAt() ? $doc->getQueuedAt()->format(DATE_ATOM) : 'null'
-            );
-            $io->writeln($line);
-
-            if ($dryRun) {
-                continue;
-            }
-
-            if (!$this->documentService->needsEmitRequeue($doc)) {
-                continue;
-            }
-
-            $snapshot = json_decode($doc->getSnapshotJson(), true);
-            $ruc = '';
-            if (is_array($snapshot)) {
-                $ruc = trim((string) ($snapshot['company_ruc'] ?? ($snapshot['company']['ruc'] ?? '')));
-            }
-            if ($ruc === '') {
-                $io->warning('  Sin RUC en snapshot, omitido: ' . $doc->getDocumentUuid());
-                continue;
-            }
-
-            $this->documentService->requeueEmitJob(
-                $doc,
-                (string) ($doc->getFiscalFingerprint() ?? ''),
-                $ruc,
-                'orphan_repair'
-            );
-            $requeued++;
+            $io->writeln($this->formatOrphanLine($doc));
         }
 
         if ($dryRun) {
             $io->note('Dry-run: no se encoló ningún job.');
-        } else {
-            $io->success(sprintf('Re-encolados %d documento(s) en fiscal:emit.', $requeued));
+            return Command::SUCCESS;
         }
 
+        $requeued = $this->orphanRepair->repairBatch($limit, $minAge);
+        $io->success(sprintf('Re-encolados %d documento(s) en fiscal:emit.', $requeued));
+
         return Command::SUCCESS;
+    }
+
+    private function formatOrphanLine(FiscalDocument $doc): string
+    {
+        return sprintf(
+            '  id=%d uuid=%s tenant=%d sale=%d status=%s queued_at=%s',
+            $doc->getId(),
+            $doc->getDocumentUuid(),
+            $doc->getTenantId(),
+            $doc->getSaleId(),
+            $doc->getStatus(),
+            $doc->getQueuedAt() ? $doc->getQueuedAt()->format(DATE_ATOM) : 'null'
+        );
     }
 }
