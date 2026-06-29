@@ -280,7 +280,7 @@
       <tag name="console.command"/>
       <tag name="container.no_preload"/>
       <argument type="service" id="App\Repository\FiscalDocumentRepository"/>
-      <argument type="service" id="App\Service\Fiscal\FiscalDocumentService"/>
+      <argument type="service" id="App\Service\Fiscal\FiscalOrphanRepairService"/>
       <argument type="service" id="App\Service\Fiscal\FiscalQueueService"/>
       <call method="setName">
         <argument>app:fiscal:requeue-orphaned</argument>
@@ -303,6 +303,7 @@
       <argument type="service" id="App\Service\Fiscal\FiscalWebhookSyncProcessor"/>
       <argument type="service" id="App\Service\Fiscal\FiscalStatusPollProcessor"/>
       <argument type="service" id="App\Service\Fiscal\Observability\FiscalAuditService"/>
+      <argument type="service" id="App\Service\Fiscal\FiscalOrphanRepairService"/>
       <call method="setName">
         <argument>app:fiscal:worker</argument>
       </call>
@@ -646,6 +647,11 @@
       <argument type="service" id="App\Service\Fiscal\FiscalFileFetcher"/>
       <argument>%env(default::FISCAL_MAIL_FROM)%</argument>
       <argument>%env(default::FISCAL_MAIL_FROM_NAME)%</argument>
+    </service>
+    <service id="App\Service\Fiscal\FiscalOrphanRepairService" class="App\Service\Fiscal\FiscalOrphanRepairService" autowire="true" autoconfigure="true">
+      <argument type="service" id="App\Repository\FiscalDocumentRepository"/>
+      <argument type="service" id="App\Service\Fiscal\FiscalDocumentService"/>
+      <argument type="service" id="App\Service\Fiscal\FiscalQueueService"/>
     </service>
     <service id="App\Service\Fiscal\FiscalPdfRenderException" class="App\Service\Fiscal\FiscalPdfRenderException" autowire="true" autoconfigure="true"/>
     <service id="App\Service\Fiscal\FiscalPdfService" class="App\Service\Fiscal\FiscalPdfService" autowire="true" autoconfigure="true">
