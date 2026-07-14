@@ -197,14 +197,35 @@ class FiscalEmitProcessor
             if ($result->isObserved()) {
                 $doc->setStatus(FiscalDocument::STATUS_OBSERVED);
                 $doc->setAcceptedAt(new \DateTimeImmutable());
+                $doc->setErrorType(null);
+                $doc->setRetryable(false);
             } elseif ($result->isAccepted()) {
                 $doc->setStatus(FiscalDocument::STATUS_ACCEPTED);
                 $doc->setAcceptedAt(new \DateTimeImmutable());
+                $doc->setErrorType(null);
+                $doc->setRetryable(false);
             } elseif ($result->rejected) {
+                // Rechazo de negocio SUNAT/PSE (código 2000+): terminal, no se reintenta.
                 $doc->setStatus(FiscalDocument::STATUS_REJECTED);
                 $doc->setRejectedAt(new \DateTimeImmutable());
+                $doc->setErrorType(FiscalDocument::ERROR_BUSINESS);
+                $doc->setRetryable(false);
             } else {
-                $doc->setStatus(FiscalDocument::STATUS_ERROR);
+                // Sin veredicto de SUNAT (CDR nulo / excepción de sistema 0100-1999): falla
+                // TRANSITORIA → se reintenta hasta que SUNAT acepte, observe o rechace.
+                $this->recordAttempt($doc, $attemptNum, $providerName, FiscalDocument::STATUS_RETRYING, $result, null, $started);
+                $this->applyFailure(
+                    $doc,
+                    $empresa,
+                    $result->errorType ?? FiscalDocument::ERROR_TRANSIENT,
+                    $result->sunatMessage ?? $result->pseMessage,
+                    $attemptNum,
+                    $started
+                );
+                if ($doc->getFiscalFingerprint()) {
+                    $this->queue->releaseClaim($doc->getFiscalFingerprint());
+                }
+                return;
             }
 
             $this->recordAttempt($doc, $attemptNum, $providerName, $doc->getStatus(), $result, null, $started);
@@ -247,12 +268,8 @@ class FiscalEmitProcessor
                 'uuid' => $doc->getDocumentUuid(),
                 'error' => $e->getMessage(),
             ]);
-            $doc->setStatus(FiscalDocument::STATUS_ERROR);
-            $doc->setSunatMessage($e->getMessage());
-            $doc->setRetryCount($doc->getRetryCount() + 1);
             $durationMs = (int) round((microtime(true) - $started) * 1000);
             $this->recordAttempt($doc, $attemptNum, $providerName, FiscalDocument::STATUS_ERROR, null, $e->getMessage(), $started);
-            $this->em->flush();
 
             $this->auditSafe(function () use ($doc, $attemptNum, $durationMs, $e, $providerName, $ruc): void {
                 if ($this->audit === null) {
@@ -271,28 +288,13 @@ class FiscalEmitProcessor
             if ($ruc !== '') {
                 $empresa = $this->empresaRepo->find($ruc);
             }
-            $nonRetryable = $this->isNonRetryableEmitError($e->getMessage());
-            if ($empresa !== null && $empresa->isRetryEnabled() && !$nonRetryable && $doc->getRetryCount() < 5) {
-                $delay = min(3600, 30 * (2 ** ($doc->getRetryCount() - 1)));
-                $doc->setStatus(FiscalDocument::STATUS_RETRYING);
-                $doc->setNextRetryAt((new \DateTimeImmutable())->modify('+' . $delay . ' seconds'));
-                $this->em->flush();
-                $this->auditSafe(function () use ($doc, $attemptNum, $delay): void {
-                    if ($this->audit === null) {
-                        return;
-                    }
-                    $this->audit->fromDocument($doc, 'fiscal_retry_scheduled', FiscalAuditLog::STATUS_RETRYING, [
-                        'attempt' => $attemptNum,
-                        'metadata_json' => json_encode(['delay_seconds' => $delay]),
-                    ]);
-                });
-                $retryQueue = ($doc->getSendMode() === 'pse')
-                    ? FiscalQueueService::QUEUE_PSE_RETRY
-                    : FiscalQueueService::QUEUE_RETRY;
-                $this->queue->scheduleRetry($doc->getDocumentUuid(), $delay, $retryQueue);
-            } else {
-                $this->notifyOrEnqueueSync($doc);
-            }
+            // Permanente (cert/credenciales/empresa deshabilitada) → no se reintenta solo.
+            // Transitorio (red, SUNAT no disponible, excepción de sistema) → se reintenta.
+            $errorType = $this->isNonRetryableEmitError($e->getMessage())
+                ? FiscalDocument::ERROR_PERMANENT
+                : FiscalDocument::ERROR_TRANSIENT;
+            $this->applyFailure($doc, $empresa, $errorType, $e->getMessage(), $attemptNum, $started);
+
             if ($doc->getFiscalFingerprint()) {
                 $this->queue->releaseClaim($doc->getFiscalFingerprint());
             }
@@ -493,6 +495,76 @@ class FiscalEmitProcessor
     }
 
     /** Errores de certificado/firma no se resuelven reintentando. */
+    /** Tope de reintentos rápidos (cola con backoff). Configurable por FISCAL_MAX_RETRIES. */
+    private function maxRetries(): int
+    {
+        $v = (int) (getenv('FISCAL_MAX_RETRIES') ?: ($_ENV['FISCAL_MAX_RETRIES'] ?? 0));
+
+        return $v > 0 ? $v : 20;
+    }
+
+    /**
+     * Aplica una falla NO terminal (transitoria o permanente):
+     *  - Fija error_type y retry_count.
+     *  - Si es transitoria y hay cupo de reintentos rápidos → STATUS_RETRYING + backoff (cola ZSET).
+     *  - Si se agotan los reintentos rápidos y es transitoria → STATUS_ERROR con retryable=true y
+     *    next_retry_at futuro: el reconcile lo re-encola periódicamente hasta que SUNAT/PSE dé veredicto.
+     *  - Si es permanente → STATUS_ERROR con retryable=false (requiere acción manual; el reconcile lo ignora).
+     */
+    private function applyFailure(
+        FiscalDocument $doc,
+        ?Empresa $empresa,
+        string $errorType,
+        ?string $message,
+        int $attemptNum,
+        float $started
+    ): void {
+        if ($message !== null && $message !== '') {
+            $doc->setSunatMessage($message);
+        }
+        $doc->setErrorType($errorType);
+        $doc->setRetryCount($doc->getRetryCount() + 1);
+
+        $permanent = ($errorType === FiscalDocument::ERROR_PERMANENT);
+        $retryEnabled = $empresa !== null && $empresa->isRetryEnabled();
+        $withinFastRetries = $doc->getRetryCount() < $this->maxRetries();
+
+        if (!$permanent && $retryEnabled && $withinFastRetries) {
+            $delay = min(3600, 30 * (2 ** max(0, $doc->getRetryCount() - 1)));
+            $doc->setStatus(FiscalDocument::STATUS_RETRYING);
+            $doc->setRetryable(true);
+            $doc->setNextRetryAt((new \DateTimeImmutable())->modify('+' . $delay . ' seconds'));
+            $this->em->flush();
+            $this->auditSafe(function () use ($doc, $attemptNum, $delay, $errorType): void {
+                if ($this->audit === null) {
+                    return;
+                }
+                $this->audit->fromDocument($doc, 'fiscal_retry_scheduled', FiscalAuditLog::STATUS_RETRYING, [
+                    'attempt' => $attemptNum,
+                    'metadata_json' => json_encode(['delay_seconds' => $delay, 'error_type' => $errorType]),
+                ]);
+            });
+            $retryQueue = ($doc->getSendMode() === 'pse')
+                ? FiscalQueueService::QUEUE_PSE_RETRY
+                : FiscalQueueService::QUEUE_RETRY;
+            $this->queue->scheduleRetry($doc->getDocumentUuid(), $delay, $retryQueue);
+
+            return;
+        }
+
+        $doc->setStatus(FiscalDocument::STATUS_ERROR);
+        if ($permanent) {
+            $doc->setRetryable(false);
+            $doc->setNextRetryAt(null);
+        } else {
+            // Reintento lento vía reconcile hasta veredicto definitivo de SUNAT/PSE.
+            $doc->setRetryable(true);
+            $doc->setNextRetryAt((new \DateTimeImmutable())->modify('+900 seconds'));
+        }
+        $this->em->flush();
+        $this->notifyOrEnqueueSync($doc);
+    }
+
     private function isNonRetryableEmitError(string $message): bool
     {
         $m = strtolower($message);

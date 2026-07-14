@@ -112,12 +112,15 @@ class SunatDirectProvider extends AbstractFiscalProvider
             $out->success = $classified['success'];
             $out->rejected = $classified['rejected'];
             $out->observed = $classified['observed'];
+            $out->errorType = $classified['errorType'];
         } else {
             $out->sunatCode = $this->extractSunatCodeWithoutCdr($result);
             $out->sunatMessage = $this->extractSunatMessageWithoutCdr($result);
             $out->success = false;
             $out->rejected = false;
             $out->observed = false;
+            // SUNAT respondió sin CDR parseable → falla técnica temporal (reintentable).
+            $out->errorType = 'transient';
             if ($out->cdrZip !== null && $out->cdrZip !== '') {
                 $out->sunatMessage = ($out->sunatMessage ?? '') !== ''
                     ? $out->sunatMessage

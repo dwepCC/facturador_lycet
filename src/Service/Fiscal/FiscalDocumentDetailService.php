@@ -168,6 +168,8 @@ class FiscalDocumentDetailService
             'sunat_code' => $doc->getSunatCode(),
             'sunat_message' => $doc->getSunatMessage(),
             'retry_count' => $doc->getRetryCount(),
+            'error_type' => $doc->getErrorType(),
+            'retryable' => $doc->isRetryable(),
             'email_status' => $doc->getEmailStatus(),
             'created_at' => $doc->getCreatedAt()->format(DATE_ATOM),
             'updated_at' => $doc->getUpdatedAt()->format(DATE_ATOM),

@@ -333,6 +333,8 @@ class FiscalOperationsService
             'provider' => $doc->getProvider(),
             'send_mode' => $doc->getSendMode(),
             'retry_count' => $doc->getRetryCount(),
+            'error_type' => $doc->getErrorType(),
+            'retryable' => $doc->isRetryable(),
             'sunat_message' => $sunatMessage,
             'pse_message' => $pseMessage,
             'pse_response' => $pseSummary,

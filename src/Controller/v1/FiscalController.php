@@ -481,6 +481,7 @@ class FiscalController extends AbstractController
             'sale_id' => $request->query->get('sale_id') !== null && $request->query->get('sale_id') !== ''
                 ? (int) $request->query->get('sale_id') : null,
             'status' => $this->q($request, 'status'),
+            'group' => $this->q($request, 'group'),
             'document_type' => $this->q($request, 'document_type'),
             'provider' => $this->q($request, 'provider'),
             'send_mode' => $this->q($request, 'send_mode'),

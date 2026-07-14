@@ -230,6 +230,30 @@ class FiscalDocumentRepository extends ServiceEntityRepository
         if (!empty($filters['status'])) {
             $qb->andWhere('d.status = :status')->setParameter('status', (string) $filters['status']);
         }
+        // Filtro por GRUPO de estado (presentación simplificada al usuario).
+        if (!empty($filters['group'])) {
+            switch ((string) $filters['group']) {
+                case 'processing': // En proceso (en cola/enviando/reintentando + error transitorio en reintento)
+                    $qb->andWhere("(d.status IN (:pg) OR (d.status = 'error' AND d.errorType = 'transient'))")
+                        ->setParameter('pg', ['pending', 'queued', 'sending', 'sent', 'retrying']);
+                    break;
+                case 'accepted':
+                    $qb->andWhere('d.status = :gacc')->setParameter('gacc', FiscalDocument::STATUS_ACCEPTED);
+                    break;
+                case 'observed':
+                    $qb->andWhere('d.status = :gobs')->setParameter('gobs', FiscalDocument::STATUS_OBSERVED);
+                    break;
+                case 'rejected':
+                    $qb->andWhere('d.status = :grej')->setParameter('grej', FiscalDocument::STATUS_REJECTED);
+                    break;
+                case 'action': // Requiere acción: error permanente (o error sin tipo, legado)
+                    $qb->andWhere("d.status = 'error' AND (d.errorType = 'permanent' OR d.errorType IS NULL)");
+                    break;
+                case 'cancelled':
+                    $qb->andWhere('d.status = :gcan')->setParameter('gcan', FiscalDocument::STATUS_CANCELLED);
+                    break;
+            }
+        }
         if (!empty($filters['document_type'])) {
             $qb->andWhere('d.documentType = :type')->setParameter('type', (string) $filters['document_type']);
         }
@@ -343,6 +367,36 @@ class FiscalDocumentRepository extends ServiceEntityRepository
      *
      * @return FiscalDocument[]
      */
+    /**
+     * Errores TRANSITORIOS listos para reintento lento vía reconcile (tras agotar los reintentos
+     * rápidos). Se acota por edad máxima para no reintentar indefinidamente algo realmente permanente.
+     *
+     * @return FiscalDocument[]
+     */
+    public function findRetryableTransientErrors(int $limit = 100, int $minAgeSeconds = 60, int $maxAgeSeconds = 172800): array
+    {
+        $now = new \DateTimeImmutable();
+        $notBefore = $now->modify(sprintf('-%d seconds', max(1, $maxAgeSeconds)));
+        $notAfter = $now->modify(sprintf('-%d seconds', max(0, $minAgeSeconds)));
+
+        return $this->createQueryBuilder('d')
+            ->andWhere('d.status = :status')
+            ->andWhere('d.errorType = :etype')
+            ->andWhere('d.retryable = true')
+            ->andWhere('(d.nextRetryAt IS NULL OR d.nextRetryAt <= :now)')
+            ->andWhere('d.createdAt >= :notBefore')
+            ->andWhere('d.updatedAt <= :notAfter')
+            ->setParameter('status', FiscalDocument::STATUS_ERROR)
+            ->setParameter('etype', FiscalDocument::ERROR_TRANSIENT)
+            ->setParameter('now', $now)
+            ->setParameter('notBefore', $notBefore)
+            ->setParameter('notAfter', $notAfter)
+            ->orderBy('d.id', 'ASC')
+            ->setMaxResults(max(1, $limit))
+            ->getQuery()
+            ->getResult();
+    }
+
     public function findEmitOrphans(int $limit = 500, int $minAgeSeconds = 120): array
     {
         $cutoff = new \DateTimeImmutable(sprintf('-%d seconds', max(0, $minAgeSeconds)));

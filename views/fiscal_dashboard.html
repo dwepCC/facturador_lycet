@@ -27,13 +27,12 @@
       <input id="to" type="date" title="Hasta">
       <select id="status">
         <option value="">Estado</option>
-        <option value="queued">En cola</option>
+        <option value="processing">En proceso</option>
         <option value="accepted">Aceptado</option>
-        <option value="error">Error</option>
-        <option value="retrying">Reintentando</option>
+        <option value="observed">Con observaciones</option>
         <option value="rejected">Rechazado</option>
-        <option value="pending">Pendiente</option>
-        <option value="sending">Enviando</option>
+        <option value="action">Requiere acción</option>
+        <option value="cancelled">Anulado</option>
       </select>
       <select id="document_type">
         <option value="">Tipo de documento</option>
@@ -197,7 +196,7 @@
       box.innerHTML=`
         <h3 class="sunat-outcome__title">${escapeHtml(title)}</h3>
         <div class="sunat-outcome__grid">
-          <div><span class="lbl">Estado documento</span><strong>${escapeHtml(statusText(doc.status))}</strong></div>
+          <div><span class="lbl">Estado documento</span><strong>${escapeHtml(fiscalGroup(doc.status,doc.error_type).label)}</strong></div>
           <div><span class="lbl">Pipeline</span><code>${escapeHtml(pipelineLabel(st))}</code></div>
           ${code?`<div><span class="lbl">Código SUNAT / CDR</span><code class="sunat-code">${escapeHtml(code)}</code></div>`:''}
           ${doc.ticket?`<div class="span-2"><span class="lbl">Ticket GRE</span><code class="ticket">${escapeHtml(doc.ticket)}</code></div>`:''}
@@ -298,6 +297,19 @@
       return'';
     }
 
+    // Colapsa los ~10 estados internos a 6 estados claros para el usuario:
+    // En proceso · Aceptado · Con observaciones · Rechazado · Requiere acción · Anulado.
+    function fiscalGroup(st, et){
+      const s=String(st||'').toLowerCase();
+      const e=String(et||'').toLowerCase();
+      if(s==='accepted')  return {label:'Aceptado', cls:' badge-ok'};
+      if(s==='observed')  return {label:'Con observaciones', cls:' badge-warn'};
+      if(s==='rejected')  return {label:'Rechazado', cls:' badge-err'};
+      if(s==='cancelled') return {label:'Anulado', cls:''};
+      if(s==='error')     return e==='transient' ? {label:'En proceso', cls:' badge-warn'} : {label:'Requiere acción', cls:' badge-err'};
+      return {label:'En proceso', cls:' badge-warn'}; // pending, queued, sending, sent, retrying
+    }
+
     const url=(p,params)=>{
       const u=new URL(API+p,location.origin);
       Object.entries(params||{}).forEach(([k,v])=>{if(v!==''&&v!=null&&v!==false)u.searchParams.set(k,v)});
@@ -313,7 +325,7 @@
     function currentFilters(){
       return {
         company_ruc: qs('company_ruc').value,
-        status: qs('status').value,
+        group: qs('status').value,
         document_type: qs('document_type').value,
         send_mode: qs('send_mode').value,
         provider: qs('provider').value,
@@ -341,6 +353,7 @@
       pageState.total=Number(data.total||0);
 
       qs('rows').innerHTML=(data.items||[]).map(d=>{
+        const g=fiscalGroup(d.status,d.error_type);
         return `<tr data-u="${d.document_uuid}">
           <td>${formatDate(d.created_at)}</td>
           <td>${d.company_ruc||'—'}</td>
@@ -349,7 +362,7 @@
           <td>${ambienteText(d.company_environment)}</td>
           <td>${documentText(d.document_type,d.series,d.number)}</td>
           <td>
-            <span class="badge ${badgeClass(d.status)}">${statusText(d.status)}</span>
+            <span class="badge${g.cls}">${g.label}</span>
             ${d.sunat_code?`<div class="cell-sub cell-sub--err" title="${escapeHtml(d.sunat_message||'')}">SUNAT ${escapeHtml(d.sunat_code)}</div>`:''}
           </td>
           <td>${d.send_mode||'—'}</td>
@@ -386,8 +399,10 @@
       qs('detailBox').style.display='block';
       const doc=d.document||{};
       const pdfBadge=doc.pdf_available?'<span class="badge badge-ok">PDF listo</span>':(doc.pdf_can_generate?'<span class="badge badge-warn">PDF generable</span>':'<span class="badge">Sin PDF</span>');
+      const g=fiscalGroup(doc.status,doc.error_type);
+      const etHint=doc.error_type?(doc.error_type==='transient'?' · se reintenta solo':(doc.error_type==='permanent'?' · requiere acción':' · rechazo SUNAT/PSE')):'';
       qs('badges').innerHTML=`
-        <span class="badge ${badgeClass(doc.status)}">${statusText(doc.status)}</span>
+        <span class="badge${g.cls}">${g.label}${etHint}</span>
         <span class="badge">${doc.send_mode||'—'}</span>
         <span class="badge">${doc.provider||'—'}</span>
         ${pdfBadge}`;

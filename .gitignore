@@ -15,8 +15,7 @@
 /var/*
 !/var/cache/
 !/var/log/
-!/var/cache/.gitkeep
-!/var/log/.gitkeep
+!/var/fiscal_storage/
 
 /vendor/
 ###< symfony/framework-bundle ###
@@ -24,5 +23,4 @@
 ###> symfony/phpunit-bridge ###
 .phpunit.result.cache
 /phpunit.xml
-###< symfony/phpunit-bridge ###var/cache/
-var/log/
+###< symfony/phpunit-bridge ###

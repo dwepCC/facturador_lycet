@@ -26,6 +26,11 @@ class FiscalDocument
     public const STATUS_RETRYING = 'retrying';
     public const STATUS_CANCELLED = 'cancelled';
 
+    // Tipo de fallo (para desambiguar STATUS_ERROR sin agregar más estados).
+    public const ERROR_TRANSIENT = 'transient'; // técnico/temporal: se sigue reintentando
+    public const ERROR_PERMANENT = 'permanent'; // requiere acción (cert, credenciales, empresa deshabilitada)
+    public const ERROR_BUSINESS = 'business';   // rechazo definitivo de SUNAT/PSE (va con STATUS_REJECTED)
+
     /**
      * @ORM\Id
      * @ORM\GeneratedValue
@@ -107,6 +112,12 @@ class FiscalDocument
 
     /** @ORM\Column(type="datetime", nullable=true) */
     private ?\DateTimeInterface $nextRetryAt = null;
+
+    /** @ORM\Column(type="string", length=20, nullable=true) */
+    private ?string $errorType = null;
+
+    /** @ORM\Column(type="boolean", options={"default":true}) */
+    private bool $retryable = true;
 
     /** @ORM\Column(type="string", length=30, nullable=true) */
     private ?string $emailStatus = null;
@@ -208,6 +219,10 @@ class FiscalDocument
     public function setRetryCount(int $v): self { $this->retryCount = $v; return $this; }
     public function getNextRetryAt(): ?\DateTimeInterface { return $this->nextRetryAt; }
     public function setNextRetryAt(?\DateTimeInterface $v): self { $this->nextRetryAt = $v; return $this; }
+    public function getErrorType(): ?string { return $this->errorType; }
+    public function setErrorType(?string $v): self { $this->errorType = $v; return $this; }
+    public function isRetryable(): bool { return $this->retryable; }
+    public function setRetryable(bool $v): self { $this->retryable = $v; return $this; }
     public function getEmailStatus(): ?string { return $this->emailStatus; }
     public function setEmailStatus(?string $v): self { $this->emailStatus = $v; return $this; }
     public function getSnapshotJson(): string { return $this->snapshotJson; }

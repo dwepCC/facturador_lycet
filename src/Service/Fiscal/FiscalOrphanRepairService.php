@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Service\Fiscal;
 
+use App\Entity\FiscalDocument;
 use App\Repository\FiscalDocumentRepository;
 
 /**
@@ -34,35 +35,47 @@ class FiscalOrphanRepairService
             return 0;
         }
 
-        $orphans = $this->repo->findEmitOrphans($limit, $minAgeSeconds);
-        if ($orphans === []) {
-            return 0;
-        }
-
         $requeued = 0;
+
+        $orphans = $this->repo->findEmitOrphans($limit, $minAgeSeconds);
         foreach ($orphans as $doc) {
             if (!$this->documentService->needsEmitRequeue($doc)) {
                 continue;
             }
-
-            $snapshot = json_decode($doc->getSnapshotJson(), true);
-            $ruc = '';
-            if (is_array($snapshot)) {
-                $ruc = trim((string) ($snapshot['company_ruc'] ?? ($snapshot['company']['ruc'] ?? '')));
-            }
+            $ruc = $this->extractRuc($doc);
             if ($ruc === '') {
                 continue;
             }
+            $this->documentService->requeueEmitJob($doc, (string) ($doc->getFiscalFingerprint() ?? ''), $ruc, 'orphan_repair');
+            $requeued++;
+        }
 
-            $this->documentService->requeueEmitJob(
-                $doc,
-                (string) ($doc->getFiscalFingerprint() ?? ''),
-                $ruc,
-                'orphan_repair'
-            );
+        // Reintento lento de errores TRANSITORIOS (SUNAT/red caídos): se re-encolan hasta que
+        // SUNAT/PSE dé veredicto o se agote la edad máxima. Los permanentes (retryable=false) se ignoran.
+        $maxAge = (int) (getenv('FISCAL_RETRY_MAX_AGE_SEC') ?: ($_ENV['FISCAL_RETRY_MAX_AGE_SEC'] ?? 0));
+        if ($maxAge <= 0) {
+            $maxAge = 172800; // 48h
+        }
+        $transient = $this->repo->findRetryableTransientErrors($limit, 60, $maxAge);
+        foreach ($transient as $doc) {
+            $ruc = $this->extractRuc($doc);
+            if ($ruc === '') {
+                continue;
+            }
+            $this->documentService->requeueEmitJob($doc, (string) ($doc->getFiscalFingerprint() ?? ''), $ruc, 'transient_retry');
             $requeued++;
         }
 
         return $requeued;
+    }
+
+    private function extractRuc(FiscalDocument $doc): string
+    {
+        $snapshot = json_decode($doc->getSnapshotJson(), true);
+        if (!is_array($snapshot)) {
+            return '';
+        }
+
+        return trim((string) ($snapshot['company_ruc'] ?? ($snapshot['company']['ruc'] ?? '')));
     }
 }

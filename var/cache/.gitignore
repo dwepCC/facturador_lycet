@@ -1,0 +1,3 @@
+# Conservar la carpeta en git pero NO su contenido (cache/logs/archivos generados).
+*
+!.gitignore

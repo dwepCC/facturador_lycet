@@ -31,6 +31,13 @@ class FiscalEmitResult
     public bool $rejected = false;
     /** Documento válido ante SUNAT pero con observaciones (código >= 4000 o notas CDR). */
     public bool $observed = false;
+    /**
+     * Tipo de fallo cuando no hay veredicto de aceptación:
+     *  - 'business'  → rechazo definitivo de SUNAT/PSE (código 2000+). Terminal, no se reintenta.
+     *  - 'transient' → falla técnica/temporal (SUNAT sin CDR, excepción de sistema 0100-1999, red). Reintentable.
+     *  - null        → aceptado / observado (sin fallo).
+     */
+    public ?string $errorType = null;
 
     public function isAccepted(): bool
     {

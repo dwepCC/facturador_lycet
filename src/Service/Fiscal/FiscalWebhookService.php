@@ -57,6 +57,8 @@ class FiscalWebhookService
             'sunat_message' => $doc->getSunatMessage(),
             'sunat_cdr_notes' => $this->extractCdrNotes($doc),
             'retry_count' => $doc->getRetryCount(),
+            'error_type' => $doc->getErrorType(),
+            'retryable' => $doc->isRetryable(),
             'event_id' => $this->eventId($doc),
             'timestamp' => time(),
         ];
