@@ -397,33 +397,6 @@ class FiscalDocumentRepository extends ServiceEntityRepository
             ->getResult();
     }
 
-    /**
-     * Comprobantes ya informados a SUNAT que esperan recuperar el CDR (consulta de validez).
-     * Estado 'sent' SIN ticket (los ticket-based los maneja el status_poll) y sin CDR aún.
-     * Sirve de red de seguridad si se pierde la cola Redis de fiscal:cdr_consult.
-     *
-     * @return FiscalDocument[]
-     */
-    public function findSentAwaitingCdr(int $limit = 100, int $minAgeSeconds = 120): array
-    {
-        $notAfter = new \DateTimeImmutable(sprintf('-%d seconds', max(0, $minAgeSeconds)));
-
-        return $this->createQueryBuilder('d')
-            ->andWhere('d.status = :status')
-            ->andWhere('d.retryable = true')
-            ->andWhere('d.ticket IS NULL')
-            ->andWhere('d.cdrUrl IS NULL')
-            ->andWhere('(d.nextRetryAt IS NULL OR d.nextRetryAt <= :now)')
-            ->andWhere('d.updatedAt <= :notAfter')
-            ->setParameter('status', FiscalDocument::STATUS_SENT)
-            ->setParameter('now', new \DateTimeImmutable())
-            ->setParameter('notAfter', $notAfter)
-            ->orderBy('d.id', 'ASC')
-            ->setMaxResults(max(1, $limit))
-            ->getQuery()
-            ->getResult();
-    }
-
     public function findEmitOrphans(int $limit = 500, int $minAgeSeconds = 120): array
     {
         $cutoff = new \DateTimeImmutable(sprintf('-%d seconds', max(0, $minAgeSeconds)));

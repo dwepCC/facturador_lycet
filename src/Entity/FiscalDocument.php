@@ -31,6 +31,12 @@ class FiscalDocument
     public const ERROR_PERMANENT = 'permanent'; // requiere acción (cert, credenciales, empresa deshabilitada)
     public const ERROR_BUSINESS = 'business';   // rechazo definitivo de SUNAT/PSE (va con STATUS_REJECTED)
 
+    // Decisión MANUAL de sincronizar el estado a la BD del tenant tras una CONSULTA de validez.
+    // Solo aplica a estados determinados por consulta (no al flujo normal de emisión, que sincroniza solo).
+    public const TENANT_SYNC_PENDING = 'pending'; // consulta resolvió estado; espera decisión del usuario
+    public const TENANT_SYNC_SYNCED = 'synced';   // usuario confirmó actualizar el tenant
+    public const TENANT_SYNC_SKIPPED = 'skipped'; // usuario decidió NO actualizar (con razón registrada)
+
     /**
      * @ORM\Id
      * @ORM\GeneratedValue
@@ -146,6 +152,15 @@ class FiscalDocument
     /** @ORM\Column(type="text", nullable=true) */
     private ?string $pseResponseJson = null;
 
+    /** @ORM\Column(type="string", length=20, nullable=true) */
+    private ?string $tenantSyncState = null;
+
+    /** @ORM\Column(type="text", nullable=true) */
+    private ?string $tenantSyncReason = null;
+
+    /** @ORM\Column(type="datetime", nullable=true) */
+    private ?\DateTimeInterface $tenantSyncDecidedAt = null;
+
     /** @ORM\Column(type="string", length=500, nullable=true) */
     private ?string $unsignedXmlUrl = null;
 
@@ -241,6 +256,12 @@ class FiscalDocument
     public function setProviderVersion(?string $v): self { $this->providerVersion = $v; return $this; }
     public function getPseResponseJson(): ?string { return $this->pseResponseJson; }
     public function setPseResponseJson(?string $v): self { $this->pseResponseJson = $v; return $this; }
+    public function getTenantSyncState(): ?string { return $this->tenantSyncState; }
+    public function setTenantSyncState(?string $v): self { $this->tenantSyncState = $v; return $this; }
+    public function getTenantSyncReason(): ?string { return $this->tenantSyncReason; }
+    public function setTenantSyncReason(?string $v): self { $this->tenantSyncReason = $v; return $this; }
+    public function getTenantSyncDecidedAt(): ?\DateTimeInterface { return $this->tenantSyncDecidedAt; }
+    public function setTenantSyncDecidedAt(?\DateTimeInterface $v): self { $this->tenantSyncDecidedAt = $v; return $this; }
     public function getUnsignedXmlUrl(): ?string { return $this->unsignedXmlUrl; }
     public function setUnsignedXmlUrl(?string $v): self { $this->unsignedXmlUrl = $v; return $this; }
     public function getCreatedAt(): \DateTimeInterface { return $this->createdAt; }

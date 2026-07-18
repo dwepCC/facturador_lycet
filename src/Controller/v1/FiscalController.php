@@ -11,6 +11,7 @@ use App\Repository\FiscalDocumentRepository;
 use App\Service\Fiscal\CdrNormalizer;
 use App\Service\Fiscal\FiscalBulkActionService;
 use App\Service\Fiscal\FiscalCdrConsultProcessor;
+use App\Service\Fiscal\FiscalCdrRecoveryService;
 use App\Service\Fiscal\FiscalCompanySyncService;
 use App\Service\Fiscal\FiscalConnectionTestService;
 use App\Service\Fiscal\FiscalDocumentDetailService;
@@ -45,6 +46,7 @@ class FiscalController extends AbstractController
     private FiscalConnectionTestService $connectionTestService;
     private FiscalDocumentPdfResolver $pdfResolver;
     private FiscalCdrConsultProcessor $cdrConsult;
+    private FiscalCdrRecoveryService $cdrRecovery;
     private EntityManagerInterface $em;
 
     public function __construct(
@@ -59,6 +61,7 @@ class FiscalController extends AbstractController
         FiscalConnectionTestService $connectionTestService,
         FiscalDocumentPdfResolver $pdfResolver,
         FiscalCdrConsultProcessor $cdrConsult,
+        FiscalCdrRecoveryService $cdrRecovery,
         EntityManagerInterface $em
     ) {
         $this->documentService = $documentService;
@@ -72,6 +75,7 @@ class FiscalController extends AbstractController
         $this->connectionTestService = $connectionTestService;
         $this->pdfResolver = $pdfResolver;
         $this->cdrConsult = $cdrConsult;
+        $this->cdrRecovery = $cdrRecovery;
         $this->em = $em;
     }
 
@@ -351,18 +355,58 @@ class FiscalController extends AbstractController
         }
 
         $fresh = $this->repo->findOneBy(['documentUuid' => $uuid]);
+        $hasCdr = $fresh !== null && $fresh->getCdrUrl() !== null && $fresh->getCdrUrl() !== '';
+        $tenantSyncState = $fresh !== null ? $fresh->getTenantSyncState() : null;
         return new JsonResponse([
             'found' => (bool) ($result['found'] ?? false),
             'accepted' => (bool) ($result['accepted'] ?? false),
             'status' => $fresh !== null ? $fresh->getStatus() : ($result['status'] ?? null),
             'sunat_code' => $fresh !== null ? $fresh->getSunatCode() : ($result['sunat_code'] ?? null),
             'sunat_message' => $fresh !== null ? $fresh->getSunatMessage() : ($result['sunat_message'] ?? null),
-            'has_cdr' => $fresh !== null && $fresh->getCdrUrl() !== null && $fresh->getCdrUrl() !== '',
-            'cdr_download_url' => $fresh !== null && $fresh->getCdrUrl() !== null && $fresh->getCdrUrl() !== ''
-                ? '/api/v1/fiscal/documents/' . $uuid . '/download/cdr'
-                : null,
+            'has_cdr' => $hasCdr,
+            'cdr_download_url' => $hasCdr ? '/api/v1/fiscal/documents/' . $uuid . '/download/cdr' : null,
+            'tenant_sync_state' => $tenantSyncState,
+            // El frontend debe preguntar Sí/No cuando queda pendiente de decisión.
+            'tenant_sync_pending' => $tenantSyncState === FiscalDocument::TENANT_SYNC_PENDING,
             'message' => (string) ($result['message'] ?? ''),
         ], Response::HTTP_OK);
+    }
+
+    /**
+     * Decisión manual: SÍ actualizar el estado en la BD del tenant (dispara el webhook al ERP).
+     *
+     * @Route("/documents/{uuid}/sync-tenant", methods={"POST"})
+     */
+    public function syncTenant(string $uuid): JsonResponse
+    {
+        $doc = $this->repo->findOneBy(['documentUuid' => $uuid]);
+        if ($doc === null) {
+            return new JsonResponse(['error' => 'no encontrado'], Response::HTTP_NOT_FOUND);
+        }
+        $result = $this->cdrRecovery->confirmTenantSync($doc);
+
+        return new JsonResponse($result, ($result['ok'] ?? false) ? Response::HTTP_OK : Response::HTTP_INTERNAL_SERVER_ERROR);
+    }
+
+    /**
+     * Decisión manual: NO actualizar el tenant. Requiere una razón, que queda registrada.
+     *
+     * @Route("/documents/{uuid}/skip-tenant-sync", methods={"POST"})
+     */
+    public function skipTenantSync(string $uuid, Request $request): JsonResponse
+    {
+        $doc = $this->repo->findOneBy(['documentUuid' => $uuid]);
+        if ($doc === null) {
+            return new JsonResponse(['error' => 'no encontrado'], Response::HTTP_NOT_FOUND);
+        }
+        $body = json_decode($request->getContent(), true);
+        $reason = is_array($body) ? trim((string) ($body['reason'] ?? '')) : '';
+        if ($reason === '') {
+            return new JsonResponse(['error' => 'Debe indicar la razón por la que no se actualizará el tenant.'], Response::HTTP_BAD_REQUEST);
+        }
+        $result = $this->cdrRecovery->declineTenantSync($doc, $reason);
+
+        return new JsonResponse($result, ($result['ok'] ?? false) ? Response::HTTP_OK : Response::HTTP_BAD_REQUEST);
     }
 
     /**
@@ -699,6 +743,7 @@ class FiscalController extends AbstractController
             'sunat_code' => $doc->getSunatCode(),
             'sunat_message' => $doc->getSunatMessage(),
             'has_cdr' => $doc->getCdrUrl() !== null && $doc->getCdrUrl() !== '',
+            'tenant_sync_state' => $doc->getTenantSyncState(),
             'customer_name' => $customerName,
             'company_ruc' => $companyRuc,
             'company_name' => $companyName,

@@ -94,6 +94,7 @@
       <div id="detailBox" style="display:none">
         <div id="badges"></div>
         <div id="sunatOutcome" class="sunat-outcome" style="display:none" aria-live="polite"></div>
+        <div id="tenantSyncBox" class="sunat-outcome" style="display:none" aria-live="polite"></div>
         <div id="docMeta" class="doc-meta"></div>
         <div class="actions">
           <button class="btn btn-indigo" id="btnResend" type="button">Reenviar</button>
@@ -365,6 +366,8 @@
           <td>
             <span class="badge${g.cls}">${g.label}</span>
             ${d.has_cdr?'<span class="badge badge-ok" title="CDR disponible">CDR ✓</span>':''}
+            ${d.tenant_sync_state==='pending'?'<span class="badge badge-warn" title="Actualización del tenant pendiente de decisión">Tenant?</span>':''}
+            ${d.tenant_sync_state==='skipped'?'<span class="badge" title="Tenant no actualizado por decisión manual">Tenant ✗</span>':''}
             ${d.sunat_code?`<div class="cell-sub cell-sub--err" title="${escapeHtml(d.sunat_message||'')}">SUNAT ${escapeHtml(d.sunat_code)}</div>`:''}
           </td>
           <td>${d.send_mode||'—'}</td>
@@ -412,6 +415,7 @@
         ${pdfBadge}`;
 
       renderSunatOutcome(doc);
+      renderTenantSync(doc);
       renderDocMeta(doc);
 
       qs('timeline').innerHTML=(d.timeline||[]).map(formatTimelineEvent).join('')||'<p class="hint-muted">Sin eventos.</p>';
@@ -570,15 +574,70 @@
         const r=await apiFetch(url('/documents/'+selectedUuid+'/consult-cdr'),{method:'POST'});
         const body=await r.json();
         if(!r.ok) throw new Error(body.error||'Error al consultar el CDR');
-        alert(body.message||(body.found?'CDR recuperado.':'CDR aún no disponible en SUNAT.'));
+        alert(body.message||(body.found?'Comprobante validado.':'Estado no resuelto por SUNAT/PSE.'));
         await detail(selectedUuid);
         await loadStats();
         await loadList();
+        // Si la consulta dejó pendiente la actualización del tenant, se pregunta Sí/No.
+        if(body.tenant_sync_pending){ await promptTenantSync(); }
       }catch(e){
         alert(e.message||'Error al consultar el CDR');
       }finally{
         btn.disabled=false; btn.textContent=prev;
       }
+    }
+
+    function renderTenantSync(doc){
+      const box=qs('tenantSyncBox');
+      const st=doc.tenant_sync_state;
+      if(!st){ box.style.display='none'; box.innerHTML=''; return; }
+      box.style.display='block';
+      if(st==='pending'){
+        box.innerHTML=`<strong>Actualización del tenant pendiente.</strong> El estado se determinó por consulta.
+          ¿Actualizar el estado en la base de datos del tenant?
+          <div class="actions" style="margin-top:8px">
+            <button class="btn btn-emerald" id="btnTenantYes" type="button">Sí, actualizar tenant</button>
+            <button class="btn btn-amber" id="btnTenantNo" type="button">No actualizar (con razón)</button>
+          </div>`;
+        qs('btnTenantYes').onclick=()=>syncTenant();
+        qs('btnTenantNo').onclick=()=>skipTenantSync();
+      } else if(st==='synced'){
+        box.innerHTML='<strong>Tenant sincronizado.</strong> El estado se actualizó en la base de datos del tenant.';
+      } else if(st==='skipped'){
+        const reason=doc.tenant_sync_reason?(' Razón: '+escapeHtml(doc.tenant_sync_reason)):'';
+        box.innerHTML='<strong>Tenant NO actualizado (por decisión manual).</strong>'+reason;
+      } else {
+        box.style.display='none'; box.innerHTML='';
+      }
+    }
+
+    async function promptTenantSync(){
+      const yes=confirm('El estado se determinó por consulta.\n\n¿Actualizar el estado en la base de datos del tenant?\n\nAceptar = Sí actualizar · Cancelar = No actualizar');
+      if(yes){ await syncTenant(); } else { await skipTenantSync(); }
+    }
+
+    async function syncTenant(){
+      if(!selectedUuid)return;
+      try{
+        const r=await apiFetch(url('/documents/'+selectedUuid+'/sync-tenant'),{method:'POST'});
+        const body=await r.json();
+        if(!r.ok) throw new Error(body.message||body.error||'No se pudo sincronizar el tenant');
+        alert(body.message||'Tenant actualizado.');
+        await detail(selectedUuid); await loadStats(); await loadList();
+      }catch(e){ alert(e.message||'Error al sincronizar el tenant'); }
+    }
+
+    async function skipTenantSync(){
+      if(!selectedUuid)return;
+      const reason=(prompt('Indique la razón por la que NO se actualizará el estado en la base de datos del tenant:','')||'').trim();
+      if(reason===''){ alert('Se requiere una razón para no actualizar el tenant.'); return; }
+      try{
+        const r=await apiFetch(url('/documents/'+selectedUuid+'/skip-tenant-sync'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason})});
+        const body=await r.json();
+        if(!r.ok) throw new Error(body.error||body.message||'No se pudo registrar la decisión');
+        alert(body.message||'Registrado: el tenant no se actualizará.');
+        await detail(selectedUuid); await loadStats(); await loadList();
+      }catch(e){ alert(e.message||'Error al registrar la decisión'); }
     }
 
     function setDefaultDateRange(){

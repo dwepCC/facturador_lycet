@@ -34,7 +34,6 @@ class FiscalEmitProcessor
     private FiscalWebhookService $webhook;
     private FiscalQueueService $queue;
     private FiscalProviderResolver $providerResolver;
-    private FiscalCdrRecoveryService $cdrRecovery;
     private FiscalPdfService $pdfService;
     private ?FiscalDocumentPdfResolver $pdfResolver;
     private LoggerInterface $logger;
@@ -49,7 +48,6 @@ class FiscalEmitProcessor
         FiscalWebhookService $webhook,
         FiscalQueueService $queue,
         FiscalProviderResolver $providerResolver,
-        FiscalCdrRecoveryService $cdrRecovery,
         FiscalPdfService $pdfService,
         LoggerInterface $logger,
         ?FiscalAuditService $audit = null,
@@ -63,7 +61,6 @@ class FiscalEmitProcessor
         $this->webhook = $webhook;
         $this->queue = $queue;
         $this->providerResolver = $providerResolver;
-        $this->cdrRecovery = $cdrRecovery;
         $this->pdfService = $pdfService;
         $this->logger = $logger;
         $this->audit = $audit;
@@ -390,10 +387,8 @@ class FiscalEmitProcessor
 
     /**
      * El comprobante ya fue informado anteriormente a SUNAT (código 1033 y variantes).
-     * En vez de reenviar, se consulta el CDR:
-     *  - Si SUNAT/PSE ya tiene el CDR → se descarga y el documento pasa a aceptado/observado/rechazado.
-     *  - Si el CDR aún no está disponible → estado "sent" (esperando CDR) y se reprograma la CONSULTA
-     *    (nunca un reenvío) en la cola fiscal:cdr_consult.
+     * NO se reenvía y NO se consulta automáticamente: se marca para revisión manual.
+     * El usuario decide cuándo validar/recuperar el CDR con el botón "Consultar CDR".
      */
     private function handleAlreadySubmitted(
         FiscalDocument $doc,
@@ -423,9 +418,6 @@ class FiscalEmitProcessor
                 if ($result->hash !== null && $result->hash !== '') {
                     $doc->setHash($result->hash);
                 }
-                if ($doc->getSentAt() === null) {
-                    $doc->setSentAt(new \DateTimeImmutable());
-                }
                 $this->em->flush();
             } catch (\Throwable $e) {
                 $this->logger->warning('fiscal_already_submitted_store_signed_failed', [
@@ -435,46 +427,25 @@ class FiscalEmitProcessor
             }
         }
 
-        $recovery = $this->cdrRecovery->recover($doc);
-
-        if (!empty($recovery['found'])) {
-            // La recuperación ya persistió estado + CDR + webhook.
-            $this->recordAttempt($doc, $attemptNum, $providerName, $doc->getStatus(), $result, null, $started);
-            $this->em->flush();
-            if (in_array($doc->getStatus(), [FiscalDocument::STATUS_ACCEPTED, FiscalDocument::STATUS_OBSERVED], true)
-                && $empresa->isEmailEnabled()) {
-                $this->queue->push(FiscalQueueService::QUEUE_EMAIL, [
-                    'document_uuid' => $doc->getDocumentUuid(),
-                ]);
-            }
-            return;
+        if ($doc->getSentAt() === null) {
+            $doc->setSentAt(new \DateTimeImmutable());
         }
-
-        // CDR aún no disponible → esperar y reconsultar (sin reenviar a SUNAT).
-        $doc->setStatus(FiscalDocument::STATUS_SENT);
-        $doc->setErrorType(null);
-        $doc->setRetryable(true);
+        // Estado terminal NO reintentable (no se reenvía) que requiere acción manual del usuario.
+        $doc->setStatus(FiscalDocument::STATUS_ERROR);
+        $doc->setErrorType(FiscalDocument::ERROR_PERMANENT);
+        $doc->setRetryable(false);
+        $doc->setNextRetryAt(null);
         if ($result->sunatCode !== null && $result->sunatCode !== '') {
             $doc->setSunatCode($result->sunatCode);
         }
         $doc->setSunatMessage(trim(
-            'Comprobante informado anteriormente a SUNAT; recuperando CDR. ' . (string) ($recovery['message'] ?? '')
+            'El comprobante fue informado anteriormente a SUNAT. No se reenvía. '
+            . 'Use "Consultar CDR" para validar el estado y recuperar el CDR manualmente. '
+            . (string) ($result->sunatMessage ?? '')
         ));
-        if ($doc->getSentAt() === null) {
-            $doc->setSentAt(new \DateTimeImmutable());
-        }
-        $delay = $this->cdrConsultDelay($doc->getRetryCount());
-        $doc->setNextRetryAt((new \DateTimeImmutable())->modify('+' . $delay . ' seconds'));
-        $this->recordAttempt($doc, $attemptNum, $providerName, FiscalDocument::STATUS_SENT, $result, null, $started);
+        $this->recordAttempt($doc, $attemptNum, $providerName, FiscalDocument::STATUS_ERROR, $result, null, $started);
         $this->em->flush();
         $this->notifyOrEnqueueSync($doc);
-        $this->queue->scheduleRetry($doc->getDocumentUuid(), $delay, FiscalQueueService::QUEUE_CDR_CONSULT);
-    }
-
-    /** Backoff para la reconsulta de CDR (no es un reenvío): 2 min → 30 min máx. */
-    private function cdrConsultDelay(int $retryCount): int
-    {
-        return (int) min(1800, 120 * max(1, $retryCount + 1));
     }
 
     /**

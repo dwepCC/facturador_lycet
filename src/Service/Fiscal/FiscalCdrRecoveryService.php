@@ -10,6 +10,7 @@ use App\Repository\EmpresaRepository;
 use App\Service\Fiscal\Provider\PseAuthBuilder;
 use App\Service\Fiscal\Provider\PseProviderRegistry;
 use App\Service\Fiscal\Provider\SunatCdrClassifier;
+use App\Service\Fiscal\Provider\SunatValidityClassifier;
 use Doctrine\ORM\EntityManagerInterface;
 use Greenter\Model\Response\CdrResponse;
 use Greenter\Ws\Reader\DomCdrReader;
@@ -90,24 +91,56 @@ class FiscalCdrRecoveryService
 
         $cdrResponse = $consult['cdr_response'] ?? null;
         $cdrZip = $consult['cdr_zip'] ?? null;
-        if (!$cdrResponse instanceof CdrResponse || $cdrZip === null || $cdrZip === '') {
-            $msg = $consult['message'] ?? 'SUNAT aún no tiene el CDR disponible para este comprobante.';
-            return $this->result(false, false, false, $doc, $msg);
+
+        // 1) SUNAT/PSE devolvió el CDR → estado según el CDR (aceptado/observado/rechazado).
+        if ($cdrResponse instanceof CdrResponse && $cdrZip !== null && $cdrZip !== '') {
+            return $this->applyRecoveredCdr($doc, $cdrZip, $cdrResponse);
         }
 
-        return $this->applyRecoveredCdr($doc, $cdrZip, $cdrResponse);
+        // 2) Sin CDR, pero el proveedor respondió: evaluar la VALIDEZ del comprobante.
+        //    Si confirma que existe y fue ACEPTADO, el comprobante es válido aunque no haya
+        //    CDR disponible → se marca aceptado igual (y se sincroniza al tenant).
+        //    El PSE puede entregar un veredicto directo (isSuccess); SUNAT directo se clasifica por mensaje.
+        $statusCode = $consult['status_code'] ?? null;
+        $statusMessage = (string) ($consult['status_message'] ?? '');
+        $verdict = $consult['verdict'] ?? SunatValidityClassifier::classify($statusCode, $statusMessage);
+        if ($verdict === SunatValidityClassifier::ACCEPTED) {
+            return $this->applyValidWithoutCdr($doc, $statusCode, $statusMessage);
+        }
+
+        // 3) No resuelto (no existe / rechazado sin CDR / en proceso / desconocido): se informa,
+        //    no se cambia a estado terminal sin evidencia. El mensaje orienta la acción.
+        $msg = $this->describeUnresolved($verdict, $statusMessage, (string) ($consult['message'] ?? ''));
+        return $this->result(false, false, false, $doc, $msg);
+    }
+
+    private function describeUnresolved(string $verdict, string $statusMessage, string $fallback): string
+    {
+        switch ($verdict) {
+            case SunatValidityClassifier::NOT_FOUND:
+                return 'SUNAT indica que el comprobante NO existe (no fue recibido). '
+                    . 'Podría requerir reenvío.' . ($statusMessage !== '' ? ' Detalle: ' . $statusMessage : '');
+            case SunatValidityClassifier::REJECTED:
+                return 'SUNAT indica RECHAZO. Reintente la consulta para obtener el CDR de rechazo.'
+                    . ($statusMessage !== '' ? ' Detalle: ' . $statusMessage : '');
+            case SunatValidityClassifier::IN_PROCESS:
+                return 'SUNAT indica que el comprobante está EN PROCESO; reintente más tarde.'
+                    . ($statusMessage !== '' ? ' Detalle: ' . $statusMessage : '');
+            default:
+                return $fallback !== '' ? $fallback : 'SUNAT aún no tiene el CDR disponible para este comprobante.';
+        }
     }
 
     /**
-     * @return array{cdr_response: ?CdrResponse, cdr_zip: ?string, message: string}
+     * @return array{cdr_response: ?CdrResponse, cdr_zip: ?string, status_code: ?string, status_message: string, message: string}
      */
     private function consultSunatDirect(Empresa $empresa, FiscalDocument $doc, string $ruc): array
     {
         if (strtolower(trim($empresa->getAmbiente())) !== 'produccion') {
-            return ['cdr_response' => null, 'cdr_zip' => null, 'message' => 'La consulta de CDR SUNAT solo está disponible en producción.'];
+            return $this->consultNull('La consulta de CDR SUNAT solo está disponible en producción.');
         }
         if (trim($empresa->getSolUser()) === '' || trim($empresa->getSolPass()) === '') {
-            return ['cdr_response' => null, 'cdr_zip' => null, 'message' => 'Credenciales SOL no configuradas para consultar el CDR.'];
+            return $this->consultNull('Credenciales SOL no configuradas para consultar el CDR.');
         }
 
         $ws = new SoapClient(SunatEndpoints::FE_CONSULTA_CDR . '?wsdl');
@@ -115,6 +148,8 @@ class FiscalCdrRecoveryService
         $service = new ConsultCdrService();
         $service->setClient($ws);
 
+        // getStatusCdr devuelve el CDR si SUNAT lo tiene y, en todo caso, statusCode + statusMessage
+        // (la validez/estado del comprobante) aunque no adjunte el CDR.
         $result = $service->getStatusCdr(
             $ruc,
             $doc->getDocumentType(),
@@ -132,18 +167,43 @@ class FiscalCdrRecoveryService
             } elseif (method_exists($result, 'getMessage') && trim((string) $result->getMessage()) !== '') {
                 $msg .= ': ' . trim((string) $result->getMessage());
             }
-            return ['cdr_response' => null, 'cdr_zip' => null, 'message' => $msg];
+            return $this->consultNull($msg);
         }
+
+        $statusCode = method_exists($result, 'getCode') ? (string) ($result->getCode() ?? '') : '';
+        $statusMessage = method_exists($result, 'getMessage') ? (string) ($result->getMessage() ?? '') : '';
+        $this->logger->info('fiscal_cdr_consult_status', [
+            'uuid' => $doc->getDocumentUuid(),
+            'status_code' => $statusCode,
+            'status_message' => $statusMessage,
+            'has_cdr' => $result->getCdrResponse() !== null,
+        ]);
 
         return [
             'cdr_response' => $result->getCdrResponse(),
             'cdr_zip' => $result->getCdrZip(),
-            'message' => (string) ($result->getMessage() ?? ''),
+            'status_code' => $statusCode !== '' ? $statusCode : null,
+            'status_message' => $statusMessage,
+            'message' => $statusMessage,
         ];
     }
 
     /**
-     * @return array{cdr_response: ?CdrResponse, cdr_zip: ?string, message: string}
+     * @return array{cdr_response: null, cdr_zip: null, status_code: null, status_message: string, message: string}
+     */
+    private function consultNull(string $message): array
+    {
+        return [
+            'cdr_response' => null,
+            'cdr_zip' => null,
+            'status_code' => null,
+            'status_message' => '',
+            'message' => $message,
+        ];
+    }
+
+    /**
+     * @return array{cdr_response: ?CdrResponse, cdr_zip: ?string, status_code: ?string, status_message: string, message: string}
      */
     private function consultPse(Empresa $empresa, FiscalDocument $doc, string $ruc): array
     {
@@ -152,7 +212,7 @@ class FiscalCdrRecoveryService
             $baseUrl = PseProviderRegistry::baseUrl((string) ($empresa->getProvider() ?? 'validapse'));
         }
         if ($baseUrl === '') {
-            return ['cdr_response' => null, 'cdr_zip' => null, 'message' => 'pse_base_url no configurada.'];
+            return $this->consultNull('pse_base_url no configurada.');
         }
 
         $filenameBase = CdrNormalizer::filenameBaseFromDocument($doc);
@@ -178,9 +238,24 @@ class FiscalCdrRecoveryService
         $bodyStr = $body === false ? '' : (string) $body;
         $resp = json_decode($bodyStr, true);
         if (!is_array($resp)) {
-            return ['cdr_response' => null, 'cdr_zip' => null, 'message' => 'PSE respondió HTTP ' . $httpCode . ' sin JSON válido.'];
+            return $this->consultNull('PSE respondió HTTP ' . $httpCode . ' sin JSON válido.');
         }
 
+        // Envelope ValidaPSE: isSuccess (bool), estado (200 ok / 400 error), mensaje | message | errors.
+        $isSuccess = filter_var($resp['isSuccess'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        $estado = isset($resp['estado']) ? (string) $resp['estado'] : null;
+        $pseMsg = $this->pseMessage($resp);
+        $statusMessage = trim(($estado !== null && $estado !== '' ? $estado . ' ' : '') . $pseMsg);
+        $this->logger->info('fiscal_cdr_consult_pse', [
+            'uuid' => $doc->getDocumentUuid(),
+            'http' => $httpCode,
+            'is_success' => $isSuccess,
+            'estado' => $estado,
+            'mensaje' => $pseMsg,
+        ]);
+
+        // El CDR (ApplicationResponse) puede venir en 'cdr' (base64). Algunos PSE lo devuelven en 'xml'
+        // en la operación de consulta; NO se asume 'xml' salvo que su contenido sea un ApplicationResponse.
         $cdrField = '';
         foreach (['cdr', 'cdr_base64', 'contenido_cdr'] as $key) {
             if (!empty($resp[$key]) && is_string($resp[$key])) {
@@ -188,23 +263,90 @@ class FiscalCdrRecoveryService
                 break;
             }
         }
-        if ($cdrField === '') {
-            $msg = $this->pseMessage($resp) ?: ('PSE aún no tiene el CDR disponible (HTTP ' . $httpCode . ').');
-            return ['cdr_response' => null, 'cdr_zip' => null, 'message' => $msg];
+        if ($cdrField === '' && !empty($resp['xml']) && is_string($resp['xml'])) {
+            $maybeXml = base64_decode((string) $resp['xml'], true);
+            if ($maybeXml !== false && stripos($maybeXml, 'ApplicationResponse') !== false) {
+                $cdrField = (string) $resp['xml'];
+            }
         }
 
-        $cdrXml = base64_decode($cdrField, true);
-        if ($cdrXml === false || $cdrXml === '') {
-            return ['cdr_response' => null, 'cdr_zip' => null, 'message' => 'CDR PSE en base64 inválido.'];
+        if ($cdrField !== '') {
+            $cdrXml = base64_decode($cdrField, true);
+            if ($cdrXml !== false && $cdrXml !== '' && stripos($cdrXml, 'ApplicationResponse') !== false) {
+                return [
+                    'cdr_response' => (new DomCdrReader(new XmlReader()))->getCdrResponse($cdrXml),
+                    'cdr_zip' => CdrNormalizer::toSunatZip($cdrXml, $filenameBase),
+                    'status_code' => $estado,
+                    'status_message' => $statusMessage,
+                    'message' => $pseMsg,
+                ];
+            }
         }
 
-        $cdrResponse = (new DomCdrReader(new XmlReader()))->getCdrResponse($cdrXml);
-        $cdrZip = CdrNormalizer::toSunatZip($cdrXml, $filenameBase);
+        // Sin CDR adjunto: el veredicto lo da el propio PSE.
+        //  - isSuccess=true  → el comprobante existe y es válido en el PSE → ACEPTADO (aunque no adjunte CDR),
+        //    salvo que el mensaje diga explícitamente rechazado.
+        //  - isSuccess=false → no válido/no encontrado: se clasifica por el mensaje para informar.
+        if ($isSuccess) {
+            $verdict = SunatValidityClassifier::classify($estado, $statusMessage);
+            if ($verdict !== SunatValidityClassifier::REJECTED) {
+                $verdict = SunatValidityClassifier::ACCEPTED;
+            }
+        } else {
+            $verdict = SunatValidityClassifier::classify($estado, $statusMessage);
+        }
 
         return [
-            'cdr_response' => $cdrResponse,
-            'cdr_zip' => $cdrZip,
-            'message' => $this->pseMessage($resp),
+            'cdr_response' => null,
+            'cdr_zip' => null,
+            'status_code' => $estado,
+            'status_message' => $statusMessage,
+            'verdict' => $verdict,
+            'message' => $pseMsg ?: ('PSE respondió (HTTP ' . $httpCode . ') sin CDR adjunto.'),
+        ];
+    }
+
+    /**
+     * SUNAT/PSE confirma que el comprobante existe y está ACEPTADO, pero no devolvió el CDR.
+     * El comprobante es válido igual → se marca aceptado (sin CDR) y se sincroniza al tenant.
+     * El CDR podrá recuperarse después con otra consulta (has_cdr seguirá en false hasta entonces).
+     *
+     * @return array{found: bool, applied: bool, accepted: bool, status: string, sunat_code: ?string, sunat_message: ?string, message: string}
+     */
+    private function applyValidWithoutCdr(FiscalDocument $doc, ?string $statusCode, string $statusMessage): array
+    {
+        $doc->setStatus(FiscalDocument::STATUS_ACCEPTED);
+        $doc->setAcceptedAt(new \DateTimeImmutable());
+        $doc->setErrorType(null);
+        $doc->setRetryable(false);
+        $doc->setNextRetryAt(null);
+        $doc->setSunatCode('0');
+        $msg = 'Aceptado por SUNAT (validado por consulta de estado; CDR no disponible aún en SUNAT).';
+        if ($statusMessage !== '') {
+            $msg .= ' Detalle SUNAT: ' . $statusMessage;
+        }
+        $doc->setSunatMessage($msg);
+        if ($doc->getSentAt() === null) {
+            $doc->setSentAt(new \DateTimeImmutable());
+        }
+
+        $this->markTenantSyncPending($doc);
+        $this->em->flush();
+
+        $this->logger->info('fiscal_cdr_valid_without_cdr', [
+            'uuid' => $doc->getDocumentUuid(),
+            'status_code' => $statusCode,
+            'status_message' => $statusMessage,
+        ]);
+
+        return [
+            'found' => true,
+            'applied' => true,
+            'accepted' => true,
+            'status' => $doc->getStatus(),
+            'sunat_code' => '0',
+            'sunat_message' => $doc->getSunatMessage(),
+            'message' => 'Comprobante validado como ACEPTADO por SUNAT (sin CDR disponible aún).',
         ];
     }
 
@@ -255,8 +397,8 @@ class FiscalCdrRecoveryService
             $doc->setNextRetryAt(null);
         }
 
+        $this->markTenantSyncPending($doc);
         $this->em->flush();
-        $this->notifyOrEnqueueSync($doc);
 
         $this->logger->info('fiscal_cdr_recovered', [
             'uuid' => $doc->getDocumentUuid(),
@@ -296,25 +438,92 @@ class FiscalCdrRecoveryService
         ];
     }
 
-    private function notifyOrEnqueueSync(FiscalDocument $doc): void
+    /**
+     * Tras una consulta de validez, el estado en el facturador se actualiza, pero la
+     * sincronización a la BD del tenant queda PENDIENTE de decisión manual del usuario.
+     */
+    private function markTenantSyncPending(FiscalDocument $doc): void
+    {
+        $doc->setTenantSyncState(FiscalDocument::TENANT_SYNC_PENDING);
+        $doc->setTenantSyncReason(null);
+        $doc->setTenantSyncDecidedAt(null);
+    }
+
+    /**
+     * El usuario confirma (Sí): se sincroniza el estado a la BD del tenant (webhook al ERP)
+     * y, si corresponde, se encola el correo al cliente.
+     *
+     * @return array{ok: bool, tenant_sync_state: string, message: string}
+     */
+    public function confirmTenantSync(FiscalDocument $doc): array
     {
         try {
             $this->webhook->notifyStatus($doc);
         } catch (\Throwable $e) {
-            $this->logger->warning('fiscal_cdr_recovery_webhook_failed', [
+            $this->logger->warning('fiscal_tenant_sync_webhook_failed', [
                 'uuid' => $doc->getDocumentUuid(),
                 'error' => $e->getMessage(),
             ]);
-            // Reintento del webhook por la cola dedicada: el backend/tenant recibirá el estado igual.
             try {
                 $this->queue->push(FiscalQueueService::QUEUE_WEBHOOK_SYNC, [
                     'document_uuid' => $doc->getDocumentUuid(),
                     'attempt' => 1,
                 ]);
             } catch (\Throwable) {
-                // Sin Redis, la red de seguridad del reconcile reintentará más tarde.
+                return [
+                    'ok' => false,
+                    'tenant_sync_state' => (string) $doc->getTenantSyncState(),
+                    'message' => 'No se pudo notificar al ERP y no hay cola de reintento: ' . $e->getMessage(),
+                ];
             }
         }
+
+        $doc->setTenantSyncState(FiscalDocument::TENANT_SYNC_SYNCED);
+        $doc->setTenantSyncReason(null);
+        $doc->setTenantSyncDecidedAt(new \DateTimeImmutable());
+        $this->em->flush();
+
+        // Correo al cliente solo si el comprobante quedó aceptado/observado y la empresa lo tiene activo.
+        if (in_array($doc->getStatus(), [FiscalDocument::STATUS_ACCEPTED, FiscalDocument::STATUS_OBSERVED], true)) {
+            $ruc = $this->extractRuc($doc);
+            $empresa = $ruc !== '' ? $this->empresaRepo->find($ruc) : null;
+            if ($empresa !== null && $empresa->isEmailEnabled()) {
+                try {
+                    $this->queue->push(FiscalQueueService::QUEUE_EMAIL, ['document_uuid' => $doc->getDocumentUuid()]);
+                } catch (\Throwable) {
+                    // el correo es best-effort; no bloquea la sincronización
+                }
+            }
+        }
+
+        $this->logger->info('fiscal_tenant_sync_confirmed', ['uuid' => $doc->getDocumentUuid(), 'status' => $doc->getStatus()]);
+
+        return ['ok' => true, 'tenant_sync_state' => FiscalDocument::TENANT_SYNC_SYNCED, 'message' => 'Estado sincronizado a la base de datos del tenant.'];
+    }
+
+    /**
+     * El usuario decide NO sincronizar (No): se registra la razón; el tenant NO se toca.
+     *
+     * @return array{ok: bool, tenant_sync_state: string, message: string}
+     */
+    public function declineTenantSync(FiscalDocument $doc, string $reason): array
+    {
+        $reason = trim($reason);
+        if ($reason === '') {
+            return ['ok' => false, 'tenant_sync_state' => (string) $doc->getTenantSyncState(), 'message' => 'Debe indicar la razón por la que no se actualizará el tenant.'];
+        }
+
+        $doc->setTenantSyncState(FiscalDocument::TENANT_SYNC_SKIPPED);
+        $doc->setTenantSyncReason($reason);
+        $doc->setTenantSyncDecidedAt(new \DateTimeImmutable());
+        $this->em->flush();
+
+        $this->logger->info('fiscal_tenant_sync_skipped', [
+            'uuid' => $doc->getDocumentUuid(),
+            'reason' => $reason,
+        ]);
+
+        return ['ok' => true, 'tenant_sync_state' => FiscalDocument::TENANT_SYNC_SKIPPED, 'message' => 'Registrado: el estado NO se actualizará en la base de datos del tenant.'];
     }
 
     private function extractRuc(FiscalDocument $doc): string

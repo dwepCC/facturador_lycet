@@ -5,40 +5,30 @@ declare(strict_types=1);
 namespace App\Service\Fiscal;
 
 use App\Entity\FiscalDocument;
-use App\Repository\EmpresaRepository;
 use App\Repository\FiscalDocumentRepository;
-use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
 
 /**
- * Procesa la cola fiscal:cdr_consult — consulta el CDR de un comprobante que ya
- * fue informado a SUNAT (o que se quiere revalidar manualmente) SIN reenviarlo.
+ * Procesa la cola fiscal:cdr_consult — consulta la validez del comprobante y recupera el CDR
+ * SIN reenviarlo. Es una operación de una sola pasada: consulta una vez y termina (no hay
+ * reintentos periódicos automáticos; el usuario decide cuándo volver a consultar).
  *
- * Si el CDR está disponible, {@see FiscalCdrRecoveryService} actualiza el estado.
- * Si no, reprograma la consulta con backoff. Nunca vuelve a emitir el comprobante.
+ * El resultado actualiza el estado en el facturador; la sincronización a la BD del tenant
+ * queda PENDIENTE de decisión manual (ver {@see FiscalCdrRecoveryService}).
  */
 class FiscalCdrConsultProcessor
 {
     private FiscalDocumentRepository $repo;
-    private EmpresaRepository $empresaRepo;
     private FiscalCdrRecoveryService $recovery;
-    private FiscalQueueService $queue;
-    private EntityManagerInterface $em;
     private LoggerInterface $logger;
 
     public function __construct(
         FiscalDocumentRepository $repo,
-        EmpresaRepository $empresaRepo,
         FiscalCdrRecoveryService $recovery,
-        FiscalQueueService $queue,
-        EntityManagerInterface $em,
         LoggerInterface $logger
     ) {
         $this->repo = $repo;
-        $this->empresaRepo = $empresaRepo;
         $this->recovery = $recovery;
-        $this->queue = $queue;
-        $this->em = $em;
         $this->logger = $logger;
     }
 
@@ -51,95 +41,18 @@ class FiscalCdrConsultProcessor
         if ($doc === null) {
             return $this->emptyResult('Documento no encontrado');
         }
-        if (in_array($doc->getStatus(), [
-            FiscalDocument::STATUS_ACCEPTED,
-            FiscalDocument::STATUS_OBSERVED,
-            FiscalDocument::STATUS_REJECTED,
-            FiscalDocument::STATUS_CANCELLED,
-        ], true)) {
+
+        $hasCdr = $doc->getCdrUrl() !== null && $doc->getCdrUrl() !== '';
+        // La consulta de validez/CDR es solo lectura (no reenvía): se permite en cualquier estado,
+        // incluido RECHAZADO (se revalida el estado real del comprobante en SUNAT/PSE).
+        // Solo se omite cuando no hay nada que hacer: anulado, o ya aceptado/observado CON su CDR.
+        if ($doc->getStatus() === FiscalDocument::STATUS_CANCELLED
+            || (in_array($doc->getStatus(), [FiscalDocument::STATUS_ACCEPTED, FiscalDocument::STATUS_OBSERVED], true) && $hasCdr)
+        ) {
             return $this->emptyResult('El comprobante ya tiene estado definitivo: ' . $doc->getStatus());
         }
 
-        $recovery = $this->recovery->recover($doc);
-
-        if (!empty($recovery['found'])) {
-            $this->maybeEnqueueEmail($doc);
-            return $recovery;
-        }
-
-        $this->reschedule($doc, $attempt);
-        return $recovery;
-    }
-
-    private function reschedule(FiscalDocument $doc, int $attempt): void
-    {
-        $maxAge = (int) (getenv('FISCAL_CDR_CONSULT_MAX_AGE_SEC') ?: ($_ENV['FISCAL_CDR_CONSULT_MAX_AGE_SEC'] ?? 0));
-        if ($maxAge <= 0) {
-            $maxAge = 86400; // 24h
-        }
-        $ageSeconds = time() - $doc->getCreatedAt()->getTimestamp();
-        if ($ageSeconds >= $maxAge) {
-            // Tras la ventana máxima sin CDR: se detiene la consulta automática (no reenvío).
-            // Permanente + no-retryable → el reconcile de errores transitorios NO lo re-encola a emisión.
-            $doc->setStatus(FiscalDocument::STATUS_ERROR);
-            $doc->setErrorType(FiscalDocument::ERROR_PERMANENT);
-            $doc->setRetryable(false);
-            $doc->setNextRetryAt(null);
-            $doc->setSunatMessage(
-                'No se pudo recuperar el CDR tras ' . (int) round($maxAge / 3600) . 'h. '
-                . 'El comprobante fue informado a SUNAT; use "Consultar CDR" para revalidar manualmente.'
-            );
-            $this->em->flush();
-            $this->logger->warning('fiscal_cdr_consult_gave_up', [
-                'uuid' => $doc->getDocumentUuid(),
-                'age_seconds' => $ageSeconds,
-            ]);
-            return;
-        }
-
-        if (!$this->queue->isEnabled()) {
-            return;
-        }
-        $delay = (int) min(1800, 120 * max(1, $attempt));
-        $doc->setNextRetryAt((new \DateTimeImmutable())->modify('+' . $delay . ' seconds'));
-        $this->em->flush();
-        $this->queue->scheduleRetry($doc->getDocumentUuid(), $delay, FiscalQueueService::QUEUE_CDR_CONSULT);
-    }
-
-    private function maybeEnqueueEmail(FiscalDocument $doc): void
-    {
-        if (!in_array($doc->getStatus(), [FiscalDocument::STATUS_ACCEPTED, FiscalDocument::STATUS_OBSERVED], true)) {
-            return;
-        }
-        $ruc = $this->extractRuc($doc);
-        if ($ruc === '') {
-            return;
-        }
-        $empresa = $this->empresaRepo->find($ruc);
-        if ($empresa === null || !$empresa->isEmailEnabled()) {
-            return;
-        }
-        try {
-            $this->queue->push(FiscalQueueService::QUEUE_EMAIL, ['document_uuid' => $doc->getDocumentUuid()]);
-        } catch (\Throwable $e) {
-            $this->logger->warning('fiscal_cdr_consult_email_enqueue_failed', [
-                'uuid' => $doc->getDocumentUuid(),
-                'error' => $e->getMessage(),
-            ]);
-        }
-    }
-
-    private function extractRuc(FiscalDocument $doc): string
-    {
-        $snapshot = json_decode($doc->getSnapshotJson(), true);
-        if (!is_array($snapshot)) {
-            return '';
-        }
-        if (isset($snapshot['document']) && is_array($snapshot['document'])) {
-            $snapshot = $snapshot['document'];
-        }
-
-        return trim((string) ($snapshot['company_ruc'] ?? ($snapshot['company']['ruc'] ?? '')));
+        return $this->recovery->recover($doc);
     }
 
     /**

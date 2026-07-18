@@ -66,16 +66,6 @@ class FiscalOrphanRepairService
             $requeued++;
         }
 
-        // Red de seguridad: comprobantes ya informados a SUNAT esperando CDR → reconsultar
-        // (NUNCA reenviar). Se re-encolan a fiscal:cdr_consult.
-        foreach ($this->repo->findSentAwaitingCdr($limit, 300) as $doc) {
-            $this->queue->push(FiscalQueueService::QUEUE_CDR_CONSULT, [
-                'document_uuid' => $doc->getDocumentUuid(),
-                'attempt' => 1,
-            ]);
-            $requeued++;
-        }
-
         return $requeued;
     }
 
