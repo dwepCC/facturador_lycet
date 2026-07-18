@@ -341,15 +341,20 @@ class FiscalController extends AbstractController
      *
      * @Route("/documents/{uuid}/consult-cdr", methods={"POST"})
      */
-    public function consultCdr(string $uuid): JsonResponse
+    public function consultCdr(string $uuid, Request $request): JsonResponse
     {
         $doc = $this->repo->findOneBy(['documentUuid' => $uuid]);
         if ($doc === null) {
             return new JsonResponse(['error' => 'no encontrado'], Response::HTTP_NOT_FOUND);
         }
 
+        // Vía de consulta: 'pse' o 'sunat'. Para comprobantes PSE se puede forzar 'sunat'
+        // (consulta de validez directa a SUNAT) cuando el PSE falla o no da respuesta.
+        $via = (string) $request->query->get('via', '');
+        $via = in_array($via, ['pse', 'sunat', 'sunat_direct'], true) ? $via : null;
+
         try {
-            $result = $this->cdrConsult->processByUuid($uuid, 1);
+            $result = $this->cdrConsult->processByUuid($uuid, 1, $via);
         } catch (\Throwable $e) {
             return new JsonResponse(['error' => $e->getMessage()], Response::HTTP_INTERNAL_SERVER_ERROR);
         }

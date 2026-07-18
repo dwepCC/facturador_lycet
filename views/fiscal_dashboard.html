@@ -103,7 +103,8 @@
           <button class="btn btn-violet" id="btnForce" type="button">Forzar</button>
           <button class="btn btn-teal" id="btnEmail" type="button">Email</button>
           <button class="btn btn-sky" id="btnPoll" type="button">Consultar ticket</button>
-          <button class="btn btn-sky" id="btnConsultCdr" type="button" title="Consulta a SUNAT/PSE si el comprobante ya fue aceptado y recupera el CDR">Consultar CDR</button>
+          <button class="btn btn-sky" id="btnConsultCdr" type="button" title="Consulta si el comprobante ya fue aceptado y recupera el CDR">Consultar CDR</button>
+          <button class="btn btn-indigo" id="btnConsultSunat" type="button" style="display:none" title="Consulta la validez directamente en SUNAT (útil si el PSE falla)">Validar con SUNAT</button>
         </div>
         <p id="emitActionHint" class="hint-muted" style="display:none" aria-live="polite"></p>
         <div class="actions">
@@ -420,6 +421,7 @@
       renderSunatOutcome(doc);
       renderTenantSync(doc);
       renderConsultDetail();
+      toggleConsultButtons(doc);
       renderDocMeta(doc);
 
       qs('timeline').innerHTML=(d.timeline||[]).map(formatTimelineEvent).join('')||'<p class="hint-muted">Sin eventos.</p>';
@@ -569,13 +571,14 @@
       await loadList();
     }
 
-    async function consultCdr(){
+    async function consultCdr(via){
       if(!selectedUuid)return;
-      const btn=qs('btnConsultCdr');
+      const btn=(via==='sunat')?qs('btnConsultSunat'):qs('btnConsultCdr');
       const prev=btn.textContent;
       btn.disabled=true; btn.textContent='Consultando…';
       try{
-        const r=await apiFetch(url('/documents/'+selectedUuid+'/consult-cdr'),{method:'POST'});
+        const params=via?{via:via}:{};
+        const r=await apiFetch(url('/documents/'+selectedUuid+'/consult-cdr',params),{method:'POST'});
         const body=await r.json();
         if(!r.ok) throw new Error(body.error||'Error al consultar el CDR');
         lastConsultDetail=body.provider_detail||'';
@@ -591,6 +594,21 @@
         alert(e.message||'Error al consultar el CDR');
       }finally{
         btn.disabled=false; btn.textContent=prev;
+      }
+    }
+
+    function toggleConsultButtons(doc){
+      const isPse=(doc.send_mode||'').toLowerCase()==='pse';
+      const bCdr=qs('btnConsultCdr'), bSunat=qs('btnConsultSunat');
+      if(isPse){
+        // PSE: dos opciones — validar con PSE y validar directo con SUNAT.
+        bCdr.textContent='Consultar validez (PSE)';
+        bCdr.dataset.via='pse';
+        bSunat.style.display='inline-flex';
+      } else {
+        bCdr.textContent='Consultar CDR';
+        delete bCdr.dataset.via;
+        bSunat.style.display='none';
       }
     }
 
@@ -683,7 +701,8 @@
     });
     qs('btnEmail').onclick=()=>action('/email');
     qs('btnPoll').onclick=()=>action('/poll');
-    qs('btnConsultCdr').onclick=()=>consultCdr();
+    qs('btnConsultCdr').onclick=()=>consultCdr(qs('btnConsultCdr').dataset.via||undefined);
+    qs('btnConsultSunat').onclick=()=>consultCdr('sunat');
 
     setDefaultDateRange();
     loadStats();

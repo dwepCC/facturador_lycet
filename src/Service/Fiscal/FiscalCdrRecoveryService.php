@@ -61,7 +61,11 @@ class FiscalCdrRecoveryService
      *
      * @return array{found: bool, applied: bool, accepted: bool, status: string, sunat_code: ?string, sunat_message: ?string, message: string}
      */
-    public function recover(FiscalDocument $doc): array
+    /**
+     * @param ?string $forceMode 'pse' o 'sunat' para forzar la vía de consulta; null = según el envío del doc.
+     *                           Permite validar un comprobante PSE directo en SUNAT cuando el PSE falla.
+     */
+    public function recover(FiscalDocument $doc, ?string $forceMode = null): array
     {
         $ruc = $this->extractRuc($doc);
         if ($ruc === '') {
@@ -72,10 +76,13 @@ class FiscalCdrRecoveryService
             return $this->result(false, false, false, $doc, 'Empresa no registrada para el RUC ' . $ruc . '.');
         }
 
-        $sendMode = strtolower(trim((string) ($doc->getSendMode() ?? $empresa->getSendMode())));
+        $forceMode = $forceMode !== null ? strtolower(trim($forceMode)) : null;
+        $mode = in_array($forceMode, ['pse', 'sunat', 'sunat_direct'], true)
+            ? ($forceMode === 'pse' ? 'pse' : 'sunat')
+            : strtolower(trim((string) ($doc->getSendMode() ?? $empresa->getSendMode())));
 
         try {
-            if ($sendMode === 'pse') {
+            if ($mode === 'pse') {
                 $consult = $this->consultPse($empresa, $doc, $ruc);
             } else {
                 $consult = $this->consultSunatDirect($empresa, $doc, $ruc);

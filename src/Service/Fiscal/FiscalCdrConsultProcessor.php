@@ -33,9 +33,10 @@ class FiscalCdrConsultProcessor
     }
 
     /**
+     * @param ?string $via 'pse' o 'sunat' para forzar la vía de consulta (null = según el envío del doc).
      * @return array{found: bool, applied: bool, accepted: bool, status: string, sunat_code: ?string, sunat_message: ?string, message: string}
      */
-    public function processByUuid(string $documentUuid, int $attempt = 1): array
+    public function processByUuid(string $documentUuid, int $attempt = 1, ?string $via = null): array
     {
         $doc = $this->repo->findOneBy(['documentUuid' => $documentUuid]);
         if ($doc === null) {
@@ -52,7 +53,7 @@ class FiscalCdrConsultProcessor
             return $this->emptyResult('El comprobante ya tiene estado definitivo: ' . $doc->getStatus());
         }
 
-        return $this->recovery->recover($doc);
+        return $this->recovery->recover($doc, $via);
     }
 
     /**

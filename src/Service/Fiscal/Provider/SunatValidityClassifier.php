@@ -23,9 +23,16 @@ final class SunatValidityClassifier
     public const IN_PROCESS = 'in_process';
     public const UNKNOWN = 'unknown';
 
+    /**
+     * statusCode del servicio de consulta getStatus de SUNAT (dato confirmado en producción):
+     * 0001 = "El comprobante existe y está aceptado".
+     */
+    private const SUNAT_ACCEPTED_CODES = ['0001'];
+
     public static function classify(?string $statusCode, ?string $statusMessage): string
     {
         $msg = self::normalize((string) $statusMessage);
+        $code = $statusCode !== null ? trim($statusCode) : '';
 
         if ($msg !== '') {
             if (self::containsAny($msg, ['no existe', 'no ha sido informado', 'no fue informado', 'no se ha informado', 'no se encuentra el comprobante', 'comprobante no se encuentra'])) {
@@ -43,7 +50,12 @@ final class SunatValidityClassifier
             }
         }
 
-        // Sin mensaje claro: no se afirma validez (evita marcar aceptado sin evidencia).
+        // Sin mensaje concluyente: usar el código confirmado como respaldo.
+        if ($code !== '' && in_array($code, self::SUNAT_ACCEPTED_CODES, true)) {
+            return self::ACCEPTED;
+        }
+
+        // Sin evidencia clara: no se afirma validez (evita marcar aceptado sin certeza).
         return self::UNKNOWN;
     }
 
