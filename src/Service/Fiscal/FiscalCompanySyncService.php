@@ -219,6 +219,18 @@ class FiscalCompanySyncService
             if ($meta !== null && $meta !== '') {
                 $entry['pse_metadata_json'] = is_string($meta) ? $meta : json_encode($meta, JSON_UNESCAPED_UNICODE);
             }
+
+            // Credenciales SOL OPCIONALES para empresas PSE: habilitan la consulta de validez
+            // directa en SUNAT (getStatus) cuando el PSE falla. Se guardan en campos separados
+            // (solUser/solPass); NO se cruzan con las credenciales del PSE.
+            $solUser = trim((string) ($sunat['sol_user'] ?? $sunat['SOL_USER'] ?? $payload['SOL_USER'] ?? ''));
+            if ($solUser !== '') {
+                $entry['SOL_USER'] = $solUser;
+            }
+            $solPass = trim((string) ($sunat['sol_password'] ?? $sunat['sol_pass'] ?? $sunat['SOL_PASS'] ?? $payload['SOL_PASS'] ?? ''));
+            if ($solPass !== '') {
+                $entry['SOL_PASS'] = $solPass;
+            }
         } else {
             $solUser = trim((string) ($sunat['sol_user'] ?? $sunat['SOL_USER'] ?? $payload['SOL_USER'] ?? ''));
             if ($solUser !== '') {
@@ -285,7 +297,8 @@ class FiscalCompanySyncService
                 ? $entity->getLastConnectionCheck()->format(DATE_ATOM) : null,
             'pse_base_url_configured' => $entity->resolvePseBaseUrl() !== '',
             'pse_token_configured' => $entity->resolvePseToken() !== '',
-            'sol_configured' => trim($entity->getSolUser()) !== '' && trim($entity->getSolPass()) !== '',
+            'sol_configured' => trim($entity->getSolUser()) !== '' && trim($entity->getSolPass()) !== ''
+                && strtoupper(trim($entity->getSolUser())) !== 'PSE',
             'certificate_configured' => $entity->getCertificate() !== null && trim((string) $entity->getCertificate()) !== '',
             'gre_client_configured' => trim((string) ($entity->getGreClientId() ?? '')) !== ''
                 && trim((string) ($entity->getGreClientSecret() ?? '')) !== '',

@@ -159,8 +159,14 @@ class FiscalCdrRecoveryService
         if (strtolower(trim($empresa->getAmbiente())) !== 'produccion') {
             return $this->consultNull('La consulta de CDR SUNAT solo está disponible en producción.');
         }
-        if (trim($empresa->getSolUser()) === '' || trim($empresa->getSolPass()) === '') {
-            return $this->consultNull('Credenciales SOL no configuradas para consultar el CDR.');
+        $solUser = trim($empresa->getSolUser());
+        $solPass = trim($empresa->getSolPass());
+        // 'PSE' es el marcador que usa el facturador cuando una empresa PSE no tiene SOL real.
+        if ($solUser === '' || $solPass === '' || strtoupper($solUser) === 'PSE') {
+            return $this->consultNull(
+                'Configure el usuario y la clave SOL de la empresa para validar directamente en SUNAT '
+                . '(configuración fiscal del tenant en el panel central).'
+            );
         }
 
         $tipo = $doc->getDocumentType();
@@ -168,7 +174,7 @@ class FiscalCdrRecoveryService
         $numero = (int) $doc->getNumber();
 
         $ws = new SoapClient(SunatEndpoints::FE_CONSULTA_CDR . '?wsdl');
-        $ws->setCredentials($empresa->getSolUser(), $empresa->getSolPass());
+        $ws->setCredentials($solUser, $solPass);
         $service = new ConsultCdrService();
         $service->setClient($ws);
 
