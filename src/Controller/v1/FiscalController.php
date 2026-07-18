@@ -369,6 +369,8 @@ class FiscalController extends AbstractController
             // El frontend debe preguntar Sí/No cuando queda pendiente de decisión.
             'tenant_sync_pending' => $tenantSyncState === FiscalDocument::TENANT_SYNC_PENDING,
             'message' => (string) ($result['message'] ?? ''),
+            // Respuesta CRUDA de SUNAT/PSE (statusCode/statusMessage o JSON) para diagnóstico.
+            'provider_detail' => (string) ($result['detail'] ?? ''),
         ], Response::HTTP_OK);
     }
 

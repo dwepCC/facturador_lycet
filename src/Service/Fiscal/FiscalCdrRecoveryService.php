@@ -91,27 +91,40 @@ class FiscalCdrRecoveryService
 
         $cdrResponse = $consult['cdr_response'] ?? null;
         $cdrZip = $consult['cdr_zip'] ?? null;
+        // Respuesta CRUDA del proveedor (SUNAT/PSE) para mostrar exactamente qué respondió.
+        $detail = (string) ($consult['provider_detail'] ?? ($consult['message'] ?? ''));
 
         // 1) SUNAT/PSE devolvió el CDR → estado según el CDR (aceptado/observado/rechazado).
         if ($cdrResponse instanceof CdrResponse && $cdrZip !== null && $cdrZip !== '') {
-            return $this->applyRecoveredCdr($doc, $cdrZip, $cdrResponse);
+            return $this->withDetail($this->applyRecoveredCdr($doc, $cdrZip, $cdrResponse), $detail);
         }
 
         // 2) Sin CDR, pero el proveedor respondió: evaluar la VALIDEZ del comprobante.
         //    Si confirma que existe y fue ACEPTADO, el comprobante es válido aunque no haya
-        //    CDR disponible → se marca aceptado igual (y se sincroniza al tenant).
+        //    CDR disponible → se marca aceptado igual (queda pendiente de sync manual al tenant).
         //    El PSE puede entregar un veredicto directo (isSuccess); SUNAT directo se clasifica por mensaje.
         $statusCode = $consult['status_code'] ?? null;
         $statusMessage = (string) ($consult['status_message'] ?? '');
         $verdict = $consult['verdict'] ?? SunatValidityClassifier::classify($statusCode, $statusMessage);
         if ($verdict === SunatValidityClassifier::ACCEPTED) {
-            return $this->applyValidWithoutCdr($doc, $statusCode, $statusMessage);
+            return $this->withDetail($this->applyValidWithoutCdr($doc, $statusCode, $statusMessage), $detail);
         }
 
         // 3) No resuelto (no existe / rechazado sin CDR / en proceso / desconocido): se informa,
         //    no se cambia a estado terminal sin evidencia. El mensaje orienta la acción.
         $msg = $this->describeUnresolved($verdict, $statusMessage, (string) ($consult['message'] ?? ''));
-        return $this->result(false, false, false, $doc, $msg);
+        return $this->withDetail($this->result(false, false, false, $doc, $msg), $detail);
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     * @return array<string, mixed>
+     */
+    private function withDetail(array $result, string $detail): array
+    {
+        $result['detail'] = $detail;
+
+        return $result;
     }
 
     private function describeUnresolved(string $verdict, string $statusMessage, string $fallback): string
@@ -143,53 +156,85 @@ class FiscalCdrRecoveryService
             return $this->consultNull('Credenciales SOL no configuradas para consultar el CDR.');
         }
 
+        $tipo = $doc->getDocumentType();
+        $serie = $doc->getSeries();
+        $numero = (int) $doc->getNumber();
+
         $ws = new SoapClient(SunatEndpoints::FE_CONSULTA_CDR . '?wsdl');
         $ws->setCredentials($empresa->getSolUser(), $empresa->getSolPass());
         $service = new ConsultCdrService();
         $service->setClient($ws);
 
-        // getStatusCdr devuelve el CDR si SUNAT lo tiene y, en todo caso, statusCode + statusMessage
-        // (la validez/estado del comprobante) aunque no adjunte el CDR.
-        $result = $service->getStatusCdr(
-            $ruc,
-            $doc->getDocumentType(),
-            $doc->getSeries(),
-            (int) $doc->getNumber()
-        );
+        $statusCode = '';
+        $statusMessage = '';
+        $soapError = null;
+        $cdrResponse = null;
+        $cdrZip = null;
 
-        if (!$result->isSuccess()) {
-            $msg = 'SUNAT no devolvió CDR';
-            if (method_exists($result, 'getError') && $result->getError() && method_exists($result->getError(), 'getMessage')) {
-                $errMsg = trim((string) $result->getError()->getMessage());
-                if ($errMsg !== '') {
-                    $msg .= ': ' . $errMsg;
-                }
-            } elseif (method_exists($result, 'getMessage') && trim((string) $result->getMessage()) !== '') {
-                $msg .= ': ' . trim((string) $result->getMessage());
+        // 1) CONSULTA DE VALIDEZ (getStatus): devuelve el estado del comprobante (statusCode + statusMessage)
+        //    aunque SUNAT no adjunte el CDR. Es la consulta que dice si el comprobante existe/es válido.
+        try {
+            $st = $service->getStatus($ruc, $tipo, $serie, $numero);
+            $statusCode = (string) ($st->getCode() ?? '');
+            $statusMessage = (string) ($st->getMessage() ?? '');
+            if (!$st->isSuccess() && method_exists($st, 'getError') && $st->getError()) {
+                $soapError = trim((string) $st->getError()->getMessage());
             }
-            return $this->consultNull($msg);
+        } catch (\Throwable $e) {
+            $soapError = 'getStatus: ' . $e->getMessage();
         }
 
-        $statusCode = method_exists($result, 'getCode') ? (string) ($result->getCode() ?? '') : '';
-        $statusMessage = method_exists($result, 'getMessage') ? (string) ($result->getMessage() ?? '') : '';
+        // 2) RECUPERAR CDR (getStatusCdr): si SUNAT tiene el CDR, se descarga.
+        try {
+            $cd = $service->getStatusCdr($ruc, $tipo, $serie, $numero);
+            if ($cd->isSuccess()) {
+                if ($cd->getCdrResponse() !== null) {
+                    $cdrResponse = $cd->getCdrResponse();
+                    $cdrZip = $cd->getCdrZip();
+                }
+                if ($statusCode === '') {
+                    $statusCode = (string) ($cd->getCode() ?? '');
+                }
+                if ($statusMessage === '') {
+                    $statusMessage = (string) ($cd->getMessage() ?? '');
+                }
+            } elseif ($soapError === null && method_exists($cd, 'getError') && $cd->getError()) {
+                $soapError = trim((string) $cd->getError()->getMessage());
+            }
+        } catch (\Throwable $e) {
+            if ($soapError === null) {
+                $soapError = 'getStatusCdr: ' . $e->getMessage();
+            }
+        }
+
+        $detail = sprintf(
+            'SUNAT · getStatus code=%s · msg="%s" · %s%s',
+            $statusCode !== '' ? $statusCode : '(vacío)',
+            $statusMessage !== '' ? $statusMessage : '(vacío)',
+            $cdrResponse !== null ? 'CDR recuperado' : 'sin CDR',
+            $soapError !== null && $soapError !== '' ? ' · fault: ' . $soapError : ''
+        );
         $this->logger->info('fiscal_cdr_consult_status', [
             'uuid' => $doc->getDocumentUuid(),
+            'tipo' => $tipo, 'serie' => $serie, 'numero' => $numero,
             'status_code' => $statusCode,
             'status_message' => $statusMessage,
-            'has_cdr' => $result->getCdrResponse() !== null,
+            'soap_error' => $soapError,
+            'has_cdr' => $cdrResponse !== null,
         ]);
 
         return [
-            'cdr_response' => $result->getCdrResponse(),
-            'cdr_zip' => $result->getCdrZip(),
+            'cdr_response' => $cdrResponse,
+            'cdr_zip' => $cdrZip,
             'status_code' => $statusCode !== '' ? $statusCode : null,
             'status_message' => $statusMessage,
-            'message' => $statusMessage,
+            'provider_detail' => $detail,
+            'message' => $statusMessage !== '' ? $statusMessage : ($soapError ?? 'SUNAT no devolvió estado del comprobante'),
         ];
     }
 
     /**
-     * @return array{cdr_response: null, cdr_zip: null, status_code: null, status_message: string, message: string}
+     * @return array{cdr_response: null, cdr_zip: null, status_code: null, status_message: string, provider_detail: string, message: string}
      */
     private function consultNull(string $message): array
     {
@@ -198,6 +243,7 @@ class FiscalCdrRecoveryService
             'cdr_zip' => null,
             'status_code' => null,
             'status_message' => '',
+            'provider_detail' => $message,
             'message' => $message,
         ];
     }
@@ -236,9 +282,10 @@ class FiscalCdrRecoveryService
         curl_close($ch);
 
         $bodyStr = $body === false ? '' : (string) $body;
+        $rawBody = trim(mb_substr($bodyStr, 0, 600));
         $resp = json_decode($bodyStr, true);
         if (!is_array($resp)) {
-            return $this->consultNull('PSE respondió HTTP ' . $httpCode . ' sin JSON válido.');
+            return $this->consultNull('PSE respondió HTTP ' . $httpCode . ' sin JSON válido. Body: ' . ($rawBody !== '' ? $rawBody : '(vacío)'));
         }
 
         // Envelope ValidaPSE: isSuccess (bool), estado (200 ok / 400 error), mensaje | message | errors.
@@ -246,12 +293,20 @@ class FiscalCdrRecoveryService
         $estado = isset($resp['estado']) ? (string) $resp['estado'] : null;
         $pseMsg = $this->pseMessage($resp);
         $statusMessage = trim(($estado !== null && $estado !== '' ? $estado . ' ' : '') . $pseMsg);
+        $pseDetail = sprintf(
+            'PSE · HTTP %d · isSuccess=%s · estado=%s · body: %s',
+            $httpCode,
+            $isSuccess ? 'true' : 'false',
+            $estado ?? '(vacío)',
+            $rawBody !== '' ? $rawBody : '(vacío)'
+        );
         $this->logger->info('fiscal_cdr_consult_pse', [
             'uuid' => $doc->getDocumentUuid(),
             'http' => $httpCode,
             'is_success' => $isSuccess,
             'estado' => $estado,
             'mensaje' => $pseMsg,
+            'body' => $rawBody,
         ]);
 
         // El CDR (ApplicationResponse) puede venir en 'cdr' (base64). Algunos PSE lo devuelven en 'xml'
@@ -278,6 +333,7 @@ class FiscalCdrRecoveryService
                     'cdr_zip' => CdrNormalizer::toSunatZip($cdrXml, $filenameBase),
                     'status_code' => $estado,
                     'status_message' => $statusMessage,
+                    'provider_detail' => $pseDetail,
                     'message' => $pseMsg,
                 ];
             }
@@ -302,6 +358,7 @@ class FiscalCdrRecoveryService
             'status_code' => $estado,
             'status_message' => $statusMessage,
             'verdict' => $verdict,
+            'provider_detail' => $pseDetail,
             'message' => $pseMsg ?: ('PSE respondió (HTTP ' . $httpCode . ') sin CDR adjunto.'),
         ];
     }

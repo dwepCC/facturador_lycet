@@ -95,6 +95,7 @@
         <div id="badges"></div>
         <div id="sunatOutcome" class="sunat-outcome" style="display:none" aria-live="polite"></div>
         <div id="tenantSyncBox" class="sunat-outcome" style="display:none" aria-live="polite"></div>
+        <div id="consultDetailBox" class="sunat-outcome" style="display:none;white-space:pre-wrap;font-family:monospace;font-size:12px" aria-live="polite"></div>
         <div id="docMeta" class="doc-meta"></div>
         <div class="actions">
           <button class="btn btn-indigo" id="btnResend" type="button">Reenviar</button>
@@ -135,6 +136,7 @@
     const fetchOpts={credentials:'same-origin'};
     const pageState={offset:0,limit:25,total:0};
     let selectedUuid=null;
+    let lastConsultDetail='';
 
     const qs=id=>document.getElementById(id);
     const statusLabel={
@@ -398,6 +400,7 @@
     }
 
     async function detail(uuid){
+      if(uuid!==selectedUuid){ lastConsultDetail=''; }
       selectedUuid=uuid;
       const d=await apiFetch(url('/documents/'+uuid)).then(r=>r.json());
       qs('selHint').style.display='none';
@@ -416,6 +419,7 @@
 
       renderSunatOutcome(doc);
       renderTenantSync(doc);
+      renderConsultDetail();
       renderDocMeta(doc);
 
       qs('timeline').innerHTML=(d.timeline||[]).map(formatTimelineEvent).join('')||'<p class="hint-muted">Sin eventos.</p>';
@@ -574,8 +578,11 @@
         const r=await apiFetch(url('/documents/'+selectedUuid+'/consult-cdr'),{method:'POST'});
         const body=await r.json();
         if(!r.ok) throw new Error(body.error||'Error al consultar el CDR');
-        alert(body.message||(body.found?'Comprobante validado.':'Estado no resuelto por SUNAT/PSE.'));
+        lastConsultDetail=body.provider_detail||'';
+        const detailTxt=body.provider_detail?('\n\nRespuesta del proveedor:\n'+body.provider_detail):'';
+        alert((body.message||(body.found?'Comprobante validado.':'Estado no resuelto por SUNAT/PSE.'))+detailTxt);
         await detail(selectedUuid);
+        renderConsultDetail();
         await loadStats();
         await loadList();
         // Si la consulta dejó pendiente la actualización del tenant, se pregunta Sí/No.
@@ -584,6 +591,18 @@
         alert(e.message||'Error al consultar el CDR');
       }finally{
         btn.disabled=false; btn.textContent=prev;
+      }
+    }
+
+    function renderConsultDetail(){
+      const box=qs('consultDetailBox');
+      if(!box) return;
+      if(lastConsultDetail){
+        box.style.display='block';
+        box.textContent='Última consulta → '+lastConsultDetail;
+      } else {
+        box.style.display='none';
+        box.textContent='';
       }
     }
 
