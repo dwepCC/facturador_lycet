@@ -34,6 +34,7 @@ class FiscalEmitProcessor
     private FiscalWebhookService $webhook;
     private FiscalQueueService $queue;
     private FiscalProviderResolver $providerResolver;
+    private FiscalCdrRecoveryService $cdrRecovery;
     private FiscalPdfService $pdfService;
     private ?FiscalDocumentPdfResolver $pdfResolver;
     private LoggerInterface $logger;
@@ -48,6 +49,7 @@ class FiscalEmitProcessor
         FiscalWebhookService $webhook,
         FiscalQueueService $queue,
         FiscalProviderResolver $providerResolver,
+        FiscalCdrRecoveryService $cdrRecovery,
         FiscalPdfService $pdfService,
         LoggerInterface $logger,
         ?FiscalAuditService $audit = null,
@@ -61,6 +63,7 @@ class FiscalEmitProcessor
         $this->webhook = $webhook;
         $this->queue = $queue;
         $this->providerResolver = $providerResolver;
+        $this->cdrRecovery = $cdrRecovery;
         $this->pdfService = $pdfService;
         $this->logger = $logger;
         $this->audit = $audit;
@@ -133,6 +136,16 @@ class FiscalEmitProcessor
             $result = $this->providerResolver->emit($doc, $empresa, $documentClass, $greenterDoc);
 
             if ($this->handleTicketOnlyResult($doc, $documentClass, $greenterDoc, $result, $providerName, $attemptNum, $started, $empresa)) {
+                return;
+            }
+
+            // SUNAT/PSE indica que el comprobante ya fue informado anteriormente:
+            // NO reenviar. Consultar el CDR (consulta de validez) y actualizar estado.
+            if ($result->alreadySubmitted) {
+                $this->handleAlreadySubmitted($doc, $result, $providerName, $attemptNum, $started, $empresa);
+                if ($doc->getFiscalFingerprint()) {
+                    $this->queue->releaseClaim($doc->getFiscalFingerprint());
+                }
                 return;
             }
 
@@ -373,6 +386,95 @@ class FiscalEmitProcessor
             $this->queue->releaseClaim($doc->getFiscalFingerprint());
         }
         return true;
+    }
+
+    /**
+     * El comprobante ya fue informado anteriormente a SUNAT (código 1033 y variantes).
+     * En vez de reenviar, se consulta el CDR:
+     *  - Si SUNAT/PSE ya tiene el CDR → se descarga y el documento pasa a aceptado/observado/rechazado.
+     *  - Si el CDR aún no está disponible → estado "sent" (esperando CDR) y se reprograma la CONSULTA
+     *    (nunca un reenvío) en la cola fiscal:cdr_consult.
+     */
+    private function handleAlreadySubmitted(
+        FiscalDocument $doc,
+        FiscalEmitResult $result,
+        string $providerName,
+        int $attemptNum,
+        float $started,
+        Empresa $empresa
+    ): void {
+        // Asegurar el XML firmado persistido (por si un intento previo no llegó a guardarlo).
+        $signedXml = trim((string) ($result->signedXml ?? ''));
+        if ($signedXml !== '' && ($doc->getXmlSignedUrl() === null || $doc->getXmlSignedUrl() === '')) {
+            try {
+                $stored = $this->storage->store(
+                    $doc->getTenantSlug(),
+                    $doc->getDocumentType(),
+                    $doc->getSeries(),
+                    $doc->getNumber(),
+                    $result->unsignedXml,
+                    $signedXml,
+                    null,
+                    $result->pdf
+                );
+                $doc->setXmlUrl($stored['xml_url']);
+                $doc->setUnsignedXmlUrl($stored['unsigned_xml_url']);
+                $doc->setXmlSignedUrl($stored['xml_signed_url']);
+                if ($result->hash !== null && $result->hash !== '') {
+                    $doc->setHash($result->hash);
+                }
+                if ($doc->getSentAt() === null) {
+                    $doc->setSentAt(new \DateTimeImmutable());
+                }
+                $this->em->flush();
+            } catch (\Throwable $e) {
+                $this->logger->warning('fiscal_already_submitted_store_signed_failed', [
+                    'uuid' => $doc->getDocumentUuid(),
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        $recovery = $this->cdrRecovery->recover($doc);
+
+        if (!empty($recovery['found'])) {
+            // La recuperación ya persistió estado + CDR + webhook.
+            $this->recordAttempt($doc, $attemptNum, $providerName, $doc->getStatus(), $result, null, $started);
+            $this->em->flush();
+            if (in_array($doc->getStatus(), [FiscalDocument::STATUS_ACCEPTED, FiscalDocument::STATUS_OBSERVED], true)
+                && $empresa->isEmailEnabled()) {
+                $this->queue->push(FiscalQueueService::QUEUE_EMAIL, [
+                    'document_uuid' => $doc->getDocumentUuid(),
+                ]);
+            }
+            return;
+        }
+
+        // CDR aún no disponible → esperar y reconsultar (sin reenviar a SUNAT).
+        $doc->setStatus(FiscalDocument::STATUS_SENT);
+        $doc->setErrorType(null);
+        $doc->setRetryable(true);
+        if ($result->sunatCode !== null && $result->sunatCode !== '') {
+            $doc->setSunatCode($result->sunatCode);
+        }
+        $doc->setSunatMessage(trim(
+            'Comprobante informado anteriormente a SUNAT; recuperando CDR. ' . (string) ($recovery['message'] ?? '')
+        ));
+        if ($doc->getSentAt() === null) {
+            $doc->setSentAt(new \DateTimeImmutable());
+        }
+        $delay = $this->cdrConsultDelay($doc->getRetryCount());
+        $doc->setNextRetryAt((new \DateTimeImmutable())->modify('+' . $delay . ' seconds'));
+        $this->recordAttempt($doc, $attemptNum, $providerName, FiscalDocument::STATUS_SENT, $result, null, $started);
+        $this->em->flush();
+        $this->notifyOrEnqueueSync($doc);
+        $this->queue->scheduleRetry($doc->getDocumentUuid(), $delay, FiscalQueueService::QUEUE_CDR_CONSULT);
+    }
+
+    /** Backoff para la reconsulta de CDR (no es un reenvío): 2 min → 30 min máx. */
+    private function cdrConsultDelay(int $retryCount): int
+    {
+        return (int) min(1800, 120 * max(1, $retryCount + 1));
     }
 
     /**

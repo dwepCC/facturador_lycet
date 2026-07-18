@@ -9,6 +9,7 @@ use App\Entity\FiscalDocument;
 use App\Repository\EmpresaRepository;
 use App\Repository\FiscalDocumentRepository;
 use App\Service\Fiscal\FiscalBulkActionService;
+use App\Service\Fiscal\FiscalCdrConsultProcessor;
 use App\Service\Fiscal\FiscalCompanySyncService;
 use App\Service\Fiscal\FiscalConnectionTestService;
 use App\Service\Fiscal\FiscalDocumentDetailService;
@@ -73,6 +74,7 @@ class FiscalControllerEnqueueActionTest extends TestCase
             $this->createMock(FiscalCompanySyncService::class),
             $this->createMock(FiscalConnectionTestService::class),
             $this->createMock(FiscalDocumentPdfResolver::class),
+            $this->createMock(FiscalCdrConsultProcessor::class),
             $em
         );
 
@@ -180,6 +182,7 @@ class FiscalControllerEnqueueActionTest extends TestCase
             $this->createMock(FiscalCompanySyncService::class),
             $this->createMock(FiscalConnectionTestService::class),
             $this->createMock(FiscalDocumentPdfResolver::class),
+            $this->createMock(FiscalCdrConsultProcessor::class),
             $this->createMock(EntityManagerInterface::class)
         );
 

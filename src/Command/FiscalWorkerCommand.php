@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Command;
 
+use App\Service\Fiscal\FiscalCdrConsultProcessor;
 use App\Service\Fiscal\FiscalEmailProcessor;
 use App\Service\Fiscal\FiscalEmitProcessor;
 use App\Service\Fiscal\FiscalOrphanRepairService;
@@ -28,6 +29,7 @@ class FiscalWorkerCommand extends Command
     private FiscalEmailProcessor $emailProcessor;
     private FiscalWebhookSyncProcessor $webhookSyncProcessor;
     private FiscalStatusPollProcessor $statusPollProcessor;
+    private FiscalCdrConsultProcessor $cdrConsultProcessor;
     private FiscalAuditService $audit;
     private FiscalOrphanRepairService $orphanRepair;
     private ?int $lastOrphanRepairAt = null;
@@ -44,6 +46,7 @@ class FiscalWorkerCommand extends Command
         FiscalEmailProcessor $emailProcessor,
         FiscalWebhookSyncProcessor $webhookSyncProcessor,
         FiscalStatusPollProcessor $statusPollProcessor,
+        FiscalCdrConsultProcessor $cdrConsultProcessor,
         FiscalAuditService $audit,
         FiscalOrphanRepairService $orphanRepair
     ) {
@@ -53,6 +56,7 @@ class FiscalWorkerCommand extends Command
         $this->emailProcessor = $emailProcessor;
         $this->webhookSyncProcessor = $webhookSyncProcessor;
         $this->statusPollProcessor = $statusPollProcessor;
+        $this->cdrConsultProcessor = $cdrConsultProcessor;
         $this->audit = $audit;
         $this->orphanRepair = $orphanRepair;
     }
@@ -117,6 +121,7 @@ class FiscalWorkerCommand extends Command
             FiscalQueueService::QUEUE_EMAIL,
             FiscalQueueService::QUEUE_WEBHOOK_SYNC,
             FiscalQueueService::QUEUE_STATUS_POLL,
+            FiscalQueueService::QUEUE_CDR_CONSULT,
         ];
     }
 
@@ -148,6 +153,10 @@ class FiscalWorkerCommand extends Command
                     $output->writeln('<info>Status poll ' . $uuid . '</info>');
                     $this->statusPollProcessor->processByUuid($uuid, (int) ($job['attempt'] ?? 1));
                     break;
+                case FiscalQueueService::QUEUE_CDR_CONSULT:
+                    $output->writeln('<info>CDR consult ' . $uuid . '</info>');
+                    $this->cdrConsultProcessor->processByUuid($uuid, (int) ($job['attempt'] ?? 1));
+                    break;
             }
         } catch (\Throwable $e) {
             $output->writeln('<error>' . $queue . ' ' . $uuid . ': ' . $e->getMessage() . '</error>');
@@ -174,6 +183,13 @@ class FiscalWorkerCommand extends Command
         foreach ($this->queue->dueRetries(FiscalQueueService::QUEUE_STATUS_POLL) as $uuid) {
             $output->writeln('<comment>Retry status poll: ' . $uuid . '</comment>');
             $this->queue->push(FiscalQueueService::QUEUE_STATUS_POLL, [
+                'document_uuid' => $uuid,
+                'attempt' => 1,
+            ]);
+        }
+        foreach ($this->queue->dueRetries(FiscalQueueService::QUEUE_CDR_CONSULT) as $uuid) {
+            $output->writeln('<comment>Retry CDR consult: ' . $uuid . '</comment>');
+            $this->queue->push(FiscalQueueService::QUEUE_CDR_CONSULT, [
                 'document_uuid' => $uuid,
                 'attempt' => 1,
             ]);

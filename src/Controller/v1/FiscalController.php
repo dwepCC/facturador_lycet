@@ -10,6 +10,7 @@ use App\Repository\EmpresaRepository;
 use App\Repository\FiscalDocumentRepository;
 use App\Service\Fiscal\CdrNormalizer;
 use App\Service\Fiscal\FiscalBulkActionService;
+use App\Service\Fiscal\FiscalCdrConsultProcessor;
 use App\Service\Fiscal\FiscalCompanySyncService;
 use App\Service\Fiscal\FiscalConnectionTestService;
 use App\Service\Fiscal\FiscalDocumentDetailService;
@@ -43,6 +44,7 @@ class FiscalController extends AbstractController
     private FiscalCompanySyncService $companySyncService;
     private FiscalConnectionTestService $connectionTestService;
     private FiscalDocumentPdfResolver $pdfResolver;
+    private FiscalCdrConsultProcessor $cdrConsult;
     private EntityManagerInterface $em;
 
     public function __construct(
@@ -56,6 +58,7 @@ class FiscalController extends AbstractController
         FiscalCompanySyncService $companySyncService,
         FiscalConnectionTestService $connectionTestService,
         FiscalDocumentPdfResolver $pdfResolver,
+        FiscalCdrConsultProcessor $cdrConsult,
         EntityManagerInterface $em
     ) {
         $this->documentService = $documentService;
@@ -68,6 +71,7 @@ class FiscalController extends AbstractController
         $this->companySyncService = $companySyncService;
         $this->connectionTestService = $connectionTestService;
         $this->pdfResolver = $pdfResolver;
+        $this->cdrConsult = $cdrConsult;
         $this->em = $em;
     }
 
@@ -246,7 +250,7 @@ class FiscalController extends AbstractController
     }
 
     /**
-     * @Route("/documents/bulk/{action}", methods={"POST"}, requirements={"action": "send|retry|force|email|poll"})
+     * @Route("/documents/bulk/{action}", methods={"POST"}, requirements={"action": "send|retry|force|email|poll|consult"})
      */
     public function bulk(string $action, Request $request): JsonResponse
     {
@@ -324,6 +328,41 @@ class FiscalController extends AbstractController
     public function pollTicket(string $uuid): JsonResponse
     {
         return $this->enqueueAction($uuid, FiscalQueueService::QUEUE_STATUS_POLL, 'poll_queued');
+    }
+
+    /**
+     * Consulta de validez / recuperación de CDR: consulta a SUNAT/PSE si el comprobante
+     * ya fue aceptado y, de existir, descarga el CDR y actualiza el estado (facturador +
+     * ERP + tenant vía webhook). Se ejecuta de forma síncrona para devolver el resultado.
+     *
+     * @Route("/documents/{uuid}/consult-cdr", methods={"POST"})
+     */
+    public function consultCdr(string $uuid): JsonResponse
+    {
+        $doc = $this->repo->findOneBy(['documentUuid' => $uuid]);
+        if ($doc === null) {
+            return new JsonResponse(['error' => 'no encontrado'], Response::HTTP_NOT_FOUND);
+        }
+
+        try {
+            $result = $this->cdrConsult->processByUuid($uuid, 1);
+        } catch (\Throwable $e) {
+            return new JsonResponse(['error' => $e->getMessage()], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+
+        $fresh = $this->repo->findOneBy(['documentUuid' => $uuid]);
+        return new JsonResponse([
+            'found' => (bool) ($result['found'] ?? false),
+            'accepted' => (bool) ($result['accepted'] ?? false),
+            'status' => $fresh !== null ? $fresh->getStatus() : ($result['status'] ?? null),
+            'sunat_code' => $fresh !== null ? $fresh->getSunatCode() : ($result['sunat_code'] ?? null),
+            'sunat_message' => $fresh !== null ? $fresh->getSunatMessage() : ($result['sunat_message'] ?? null),
+            'has_cdr' => $fresh !== null && $fresh->getCdrUrl() !== null && $fresh->getCdrUrl() !== '',
+            'cdr_download_url' => $fresh !== null && $fresh->getCdrUrl() !== null && $fresh->getCdrUrl() !== ''
+                ? '/api/v1/fiscal/documents/' . $uuid . '/download/cdr'
+                : null,
+            'message' => (string) ($result['message'] ?? ''),
+        ], Response::HTTP_OK);
     }
 
     /**
@@ -659,6 +698,7 @@ class FiscalController extends AbstractController
             'sunat_mode' => $doc->getSunatMode(),
             'sunat_code' => $doc->getSunatCode(),
             'sunat_message' => $doc->getSunatMessage(),
+            'has_cdr' => $doc->getCdrUrl() !== null && $doc->getCdrUrl() !== '',
             'customer_name' => $customerName,
             'company_ruc' => $companyRuc,
             'company_name' => $companyName,

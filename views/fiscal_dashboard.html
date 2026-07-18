@@ -101,6 +101,7 @@
           <button class="btn btn-violet" id="btnForce" type="button">Forzar</button>
           <button class="btn btn-teal" id="btnEmail" type="button">Email</button>
           <button class="btn btn-sky" id="btnPoll" type="button">Consultar ticket</button>
+          <button class="btn btn-sky" id="btnConsultCdr" type="button" title="Consulta a SUNAT/PSE si el comprobante ya fue aceptado y recupera el CDR">Consultar CDR</button>
         </div>
         <p id="emitActionHint" class="hint-muted" style="display:none" aria-live="polite"></p>
         <div class="actions">
@@ -363,6 +364,7 @@
           <td>${documentText(d.document_type,d.series,d.number)}</td>
           <td>
             <span class="badge${g.cls}">${g.label}</span>
+            ${d.has_cdr?'<span class="badge badge-ok" title="CDR disponible">CDR ✓</span>':''}
             ${d.sunat_code?`<div class="cell-sub cell-sub--err" title="${escapeHtml(d.sunat_message||'')}">SUNAT ${escapeHtml(d.sunat_code)}</div>`:''}
           </td>
           <td>${d.send_mode||'—'}</td>
@@ -399,12 +401,14 @@
       qs('detailBox').style.display='block';
       const doc=d.document||{};
       const pdfBadge=doc.pdf_available?'<span class="badge badge-ok">PDF listo</span>':(doc.pdf_can_generate?'<span class="badge badge-warn">PDF generable</span>':'<span class="badge">Sin PDF</span>');
+      const cdrBadge=doc.has_cdr?'<span class="badge badge-ok">CDR ✓</span>':'<span class="badge">Sin CDR</span>';
       const g=fiscalGroup(doc.status,doc.error_type);
       const etHint=doc.error_type?(doc.error_type==='transient'?' · se reintenta solo':(doc.error_type==='permanent'?' · requiere acción':' · rechazo SUNAT/PSE')):'';
       qs('badges').innerHTML=`
         <span class="badge${g.cls}">${g.label}${etHint}</span>
         <span class="badge">${doc.send_mode||'—'}</span>
         <span class="badge">${doc.provider||'—'}</span>
+        ${cdrBadge}
         ${pdfBadge}`;
 
       renderSunatOutcome(doc);
@@ -557,6 +561,26 @@
       await loadList();
     }
 
+    async function consultCdr(){
+      if(!selectedUuid)return;
+      const btn=qs('btnConsultCdr');
+      const prev=btn.textContent;
+      btn.disabled=true; btn.textContent='Consultando…';
+      try{
+        const r=await apiFetch(url('/documents/'+selectedUuid+'/consult-cdr'),{method:'POST'});
+        const body=await r.json();
+        if(!r.ok) throw new Error(body.error||'Error al consultar el CDR');
+        alert(body.message||(body.found?'CDR recuperado.':'CDR aún no disponible en SUNAT.'));
+        await detail(selectedUuid);
+        await loadStats();
+        await loadList();
+      }catch(e){
+        alert(e.message||'Error al consultar el CDR');
+      }finally{
+        btn.disabled=false; btn.textContent=prev;
+      }
+    }
+
     function setDefaultDateRange(){
       const now=new Date();
       const y=now.getFullYear();
@@ -581,6 +605,7 @@
     });
     qs('btnEmail').onclick=()=>action('/email');
     qs('btnPoll').onclick=()=>action('/poll');
+    qs('btnConsultCdr').onclick=()=>consultCdr();
 
     setDefaultDateRange();
     loadStats();

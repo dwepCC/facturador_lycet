@@ -194,6 +194,17 @@ class ValidaPseProvider extends AbstractFiscalProvider
         if ($isSuccess && $out->cdrZip !== null) {
             $out->sunatCode = '0';
             $out->sunatMessage = $out->pseMessage ?: 'Aceptado vía PSE';
+        } elseif (SunatDuplicateClassifier::isAlreadySubmitted(
+            isset($pseResp['estado']) ? (string) $pseResp['estado'] : null,
+            $out->pseMessage
+        )) {
+            // El comprobante ya fue informado a SUNAT en un intento previo: no reenviar,
+            // consultar el CDR en el PSE (GET /api/cpe/consultar/{archivo}).
+            $out->sunatCode = isset($pseResp['estado']) ? (string) $pseResp['estado'] : null;
+            $out->sunatMessage = $out->pseMessage ?: 'El comprobante fue informado anteriormente';
+            $out->rejected = false;
+            $out->alreadySubmitted = true;
+            $out->errorType = 'transient';
         } else {
             $estado = $pseResp['estado'] ?? null;
             $out->sunatCode = $estado !== null ? (string) $estado : 'error';

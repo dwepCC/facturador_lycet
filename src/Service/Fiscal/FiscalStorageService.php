@@ -42,4 +42,17 @@ class FiscalStorageService
             $pdf
         );
     }
+
+    /**
+     * Guarda únicamente el ZIP del CDR (recuperación de CDR). Devuelve su URL pública.
+     */
+    public function storeCdr(
+        string $tenantSlug,
+        string $documentType,
+        string $series,
+        string $number,
+        string $cdrZip
+    ): string {
+        return $this->driver->storeCdr($tenantSlug, $documentType, $series, $number, $cdrZip);
+    }
 }

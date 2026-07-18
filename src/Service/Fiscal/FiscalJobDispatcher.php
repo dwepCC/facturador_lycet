@@ -16,6 +16,7 @@ class FiscalJobDispatcher
     private FiscalEmailProcessor $emailProcessor;
     private FiscalWebhookSyncProcessor $webhookSyncProcessor;
     private FiscalStatusPollProcessor $statusPollProcessor;
+    private FiscalCdrConsultProcessor $cdrConsultProcessor;
     private LoggerInterface $logger;
 
     public function __construct(
@@ -24,6 +25,7 @@ class FiscalJobDispatcher
         FiscalEmailProcessor $emailProcessor,
         FiscalWebhookSyncProcessor $webhookSyncProcessor,
         FiscalStatusPollProcessor $statusPollProcessor,
+        FiscalCdrConsultProcessor $cdrConsultProcessor,
         LoggerInterface $logger
     ) {
         $this->queue = $queue;
@@ -31,6 +33,7 @@ class FiscalJobDispatcher
         $this->emailProcessor = $emailProcessor;
         $this->webhookSyncProcessor = $webhookSyncProcessor;
         $this->statusPollProcessor = $statusPollProcessor;
+        $this->cdrConsultProcessor = $cdrConsultProcessor;
         $this->logger = $logger;
     }
 
@@ -80,6 +83,9 @@ class FiscalJobDispatcher
                 return;
             case FiscalQueueService::QUEUE_STATUS_POLL:
                 $this->statusPollProcessor->processByUuid($uuid, (int) ($payload['attempt'] ?? 1));
+                return;
+            case FiscalQueueService::QUEUE_CDR_CONSULT:
+                $this->cdrConsultProcessor->processByUuid($uuid, (int) ($payload['attempt'] ?? 1));
                 return;
             default:
                 $this->logger->warning('fiscal_sync_dispatch_unknown_queue', ['queue' => $queue]);

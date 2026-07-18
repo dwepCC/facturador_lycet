@@ -90,6 +90,8 @@ class FiscalBulkActionService
                 return FiscalQueueService::QUEUE_EMAIL;
             case 'poll':
                 return FiscalQueueService::QUEUE_STATUS_POLL;
+            case 'consult':
+                return FiscalQueueService::QUEUE_CDR_CONSULT;
             case 'send':
             case 'retry':
             case 'force':
@@ -103,6 +105,11 @@ class FiscalBulkActionService
     {
         if ($action === 'force') {
             return false;
+        }
+        // Consulta de CDR: útil incluso en rechazados/errores; solo se omite si ya hay CDR.
+        if ($action === 'consult') {
+            return in_array($doc->getStatus(), [FiscalDocument::STATUS_ACCEPTED, FiscalDocument::STATUS_OBSERVED], true)
+                && $doc->getCdrUrl() !== null && $doc->getCdrUrl() !== '';
         }
         if ($doc->getStatus() === FiscalDocument::STATUS_ACCEPTED && in_array($action, ['send', 'retry'], true)) {
             return true;

@@ -160,6 +160,7 @@ class FiscalDocumentDetailService
             'xml_signed_url' => $doc->getXmlSignedUrl(),
             'unsigned_xml_url' => $doc->getUnsignedXmlUrl(),
             'cdr_url' => $doc->getCdrUrl(),
+            'has_cdr' => $doc->getCdrUrl() !== null && $doc->getCdrUrl() !== '',
             'pdf_url' => $doc->getPdfUrl(),
             'pdf_available' => $this->pdfResolver !== null && $this->pdfResolver->hasStoredPdf($doc),
             'pdf_can_generate' => $this->pdfResolver !== null && $this->pdfResolver->canGenerate($doc),

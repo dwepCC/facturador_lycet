@@ -126,6 +126,14 @@ class SunatDirectProvider extends AbstractFiscalProvider
                     ? $out->sunatMessage
                     : 'CDR recibido sin detalle parseable';
             }
+            // SUNAT ya aceptó este comprobante antes (típico cuando se cayó sin devolver CDR).
+            // No se debe reenviar: se marca para consultar el CDR (consulta de validez).
+            if (SunatDuplicateClassifier::isAlreadySubmitted(
+                $this->extractSunatFaultCode($result),
+                $out->sunatMessage
+            )) {
+                $out->alreadySubmitted = true;
+            }
         }
 
         $out->sunatResponse = ['raw' => json_decode(json_encode($result), true)];
@@ -168,6 +176,21 @@ class SunatDirectProvider extends AbstractFiscalProvider
             $err = $result->getError();
             if (method_exists($err, 'getMessage')) {
                 return (string) $err->getMessage();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Código real del fault SOAP de SUNAT (ej. "1033"), distinto del genérico "error".
+     */
+    private function extractSunatFaultCode(object $result): ?string
+    {
+        if (method_exists($result, 'getError') && $result->getError()) {
+            $err = $result->getError();
+            if (method_exists($err, 'getCode')) {
+                $code = trim((string) $err->getCode());
+                return $code !== '' ? $code : null;
             }
         }
         return null;

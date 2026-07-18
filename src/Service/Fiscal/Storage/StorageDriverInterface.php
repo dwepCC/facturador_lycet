@@ -22,4 +22,16 @@ interface StorageDriverInterface
         ?string $cdrZip,
         ?string $pdf
     ): array;
+
+    /**
+     * Guarda únicamente el ZIP del CDR (recuperación de CDR / consulta de validez).
+     * Devuelve la URL pública del CDR almacenado.
+     */
+    public function storeCdr(
+        string $tenantSlug,
+        string $documentType,
+        string $series,
+        string $number,
+        string $cdrZip
+    ): string;
 }

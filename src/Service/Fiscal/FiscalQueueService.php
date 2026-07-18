@@ -17,6 +17,7 @@ class FiscalQueueService
     public const QUEUE_WEBHOOK_SYNC = 'fiscal:webhook_sync';
     public const QUEUE_PSE_RETRY = 'fiscal:pse_retry';
     public const QUEUE_STATUS_POLL = 'fiscal:status_poll';
+    public const QUEUE_CDR_CONSULT = 'fiscal:cdr_consult';
     public const QUEUE_AUDIT = 'fiscal:audit';
     private const KEY_WORKER_HEARTBEAT = 'fiscal:worker:heartbeat';
 
