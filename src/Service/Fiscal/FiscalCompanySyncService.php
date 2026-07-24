@@ -108,10 +108,10 @@ class FiscalCompanySyncService
             if ($token === '' && ($existing === null || $existing->resolvePseToken() === '')) {
                 throw new \InvalidArgumentException('PSE requiere contraseña / token de acceso');
             }
-            $ambiente = strtolower(trim((string) ($payload['ambiente'] ?? $payload['environment'] ?? 'pruebas')));
-            if ($ambiente === 'produccion') {
-                $this->assertProductionSunatApiCredentials($payload, $existing);
-            }
+            // Las credenciales GRE (Client ID/Secret SUNAT API) solo hacen falta para Guías de
+            // Remisión, y se validan al emitir/conectar (Provider::validateProductionSunatApi).
+            // Exigirlas aquí bloqueaba guardar la config de empresas que solo emiten
+            // boletas/facturas y no usan GRE.
             return;
         }
 
@@ -136,30 +136,8 @@ class FiscalCompanySyncService
             throw new \InvalidArgumentException('SUNAT directa requiere certificado digital');
         }
 
-        $ambiente = strtolower(trim((string) ($payload['ambiente'] ?? $payload['environment'] ?? 'pruebas')));
-        if ($ambiente === 'produccion') {
-            $this->assertProductionSunatApiCredentials($payload, $existing);
-        }
-    }
-
-    /**
-     * @param array<string, mixed> $payload
-     */
-    private function assertProductionSunatApiCredentials(array $payload, ?Empresa $existing): void
-    {
-        $greId = trim((string) ($payload['gre_client_id'] ?? $payload['CLIENT_ID'] ?? ''));
-        $greSec = trim((string) ($payload['gre_client_secret'] ?? $payload['CLIENT_SECRET'] ?? ''));
-        if ($greId === '' && $existing !== null) {
-            $greId = trim((string) ($existing->getGreClientId() ?? ''));
-        }
-        if ($greSec === '' && $existing !== null) {
-            $greSec = trim((string) ($existing->getGreClientSecret() ?? ''));
-        }
-        if ($greId === '' || $greSec === '') {
-            throw new \InvalidArgumentException(
-                'Producción requiere Client ID y Client Secret SUNAT API configurados en la empresa'
-            );
-        }
+        // Credenciales GRE: no se exigen al guardar la config. Solo se validan al emitir una
+        // Guía de Remisión (Provider::validateProductionSunatApi). Boletas/facturas no las usan.
     }
 
     /**
