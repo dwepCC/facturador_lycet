@@ -144,6 +144,8 @@ class FiscalDocumentDetailService
             'status' => $doc->getStatus(),
             'send_mode' => $doc->getSendMode(),
             'sunat_mode' => $doc->getSunatMode(),
+            'original_sunat_mode' => $doc->getOriginalSunatMode(),
+            'reissue_count' => $doc->getReissueCount(),
             'provider' => $doc->getProvider(),
             'fiscal_fingerprint' => $doc->getFiscalFingerprint(),
             'snapshot_version' => $doc->getSnapshotVersion(),

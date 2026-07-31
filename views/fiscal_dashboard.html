@@ -63,7 +63,7 @@
               <th>RUC</th>
               <th>Razón social</th>
               <th>Tenant</th>
-              <th>Ambiente</th>
+              <th>Ambiente envío</th>
               <th>Documento</th>
               <th>Estado</th>
               <th>Modo</th>
@@ -145,7 +145,6 @@
       retrying:'Reintentando', pending:'Pendiente', sending:'Enviando', sent:'Enviado',
       observed:'Observado', cancelled:'Cancelado'
     };
-    const envLabel={produccion:'Producción', pruebas:'Pruebas', demo:'Demo'};
     const documentTypeLabel={
       '01':'FACTURA',
       '03':'BOLETA',
@@ -281,9 +280,24 @@
       return statusLabel[key] || st || '—';
     }
 
-    function ambienteText(v){
-      const key=String(v||'').toLowerCase();
-      return envLabel[key] || (v ? v.charAt(0).toUpperCase()+v.slice(1) : '—');
+    // Ambiente contra el que se envió ESTE documento, no el que la empresa tiene
+    // configurado hoy. Al pasar una empresa de pruebas a producción, sus
+    // comprobantes antiguos siguen siendo de pruebas: SUNAT nunca los recibió en
+    // el ambiente real. Cuando el documento se reemitió, se muestran los dos
+    // ambientes para que el salto quede a la vista.
+    function docSunatModeText(d){
+      const modeLabel={production:'Producción', beta:'Pruebas'};
+      const current=String(d.sunat_mode||'').toLowerCase();
+      const origin=String(d.original_sunat_mode||'').toLowerCase();
+      if(!current && !origin) return '<span class="cell-sub">Sin enviar</span>';
+
+      const currentText=modeLabel[current]||current||'—';
+      if(origin && current && origin!==current){
+        const originText=modeLabel[origin]||origin;
+        return `<span class="badge badge-warn" title="Emitido en ${escapeHtml(originText)} y reenviado en ${escapeHtml(currentText)}">${escapeHtml(originText)} → ${escapeHtml(currentText)}</span>`;
+      }
+      const cls=current==='production'?'badge badge-ok':'badge badge-warn';
+      return `<span class="${cls}">${escapeHtml(currentText)}</span>`;
     }
 
     function documentText(type, series, number){
@@ -364,8 +378,11 @@
           <td>${d.company_ruc||'—'}</td>
           <td>${d.company_name||'—'}</td>
           <td>${d.tenant_slug||'—'}</td>
-          <td>${ambienteText(d.company_environment)}</td>
-          <td>${documentText(d.document_type,d.series,d.number)}</td>
+          <td>${docSunatModeText(d)}</td>
+          <td>
+            ${documentText(d.document_type,d.series,d.number)}
+            ${Number(d.reissue_count||0)>0?`<div class="cell-sub" title="Reenviado con otra fecha de emisión">Reemitido ×${Number(d.reissue_count)}</div>`:''}
+          </td>
           <td>
             <span class="badge${g.cls}">${g.label}</span>
             ${d.has_cdr?'<span class="badge badge-ok" title="CDR disponible">CDR ✓</span>':''}

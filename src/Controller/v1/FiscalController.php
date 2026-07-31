@@ -747,6 +747,8 @@ class FiscalController extends AbstractController
             'send_mode' => $doc->getSendMode(),
             'provider' => $doc->getProvider(),
             'sunat_mode' => $doc->getSunatMode(),
+            'original_sunat_mode' => $doc->getOriginalSunatMode(),
+            'reissue_count' => $doc->getReissueCount(),
             'sunat_code' => $doc->getSunatCode(),
             'sunat_message' => $doc->getSunatMessage(),
             'has_cdr' => $doc->getCdrUrl() !== null && $doc->getCdrUrl() !== '',
