@@ -28,8 +28,15 @@ class SeeApiFactory
 
     /**
      * Construye Api GRE con endpoints y credenciales según ambiente de la empresa.
-     * Pruebas: NubeFact (AUTH_URL/API_URL + CLIENT_ID/SECRET del .env).
-     * Producción: SUNAT API (URLs oficiales + CLIENT_ID/SECRET por empresa).
+     *
+     * Pruebas: NubeFact (AUTH_URL/API_URL + CLIENT_ID/SECRET + SOL_USER/SOL_PASS del .env).
+     * SUNAT no tiene ambiente de pruebas para GRE (solo para facturas/boletas), así que aquí
+     * NO se usa el SOL de la empresa — sería el SOL real que el tenant configuró para emitir en
+     * la beta clásica de SUNAT, y NubeFact autentica contra su propia cuenta de sandbox, no
+     * contra la del tenant. El certificado SÍ sigue siendo el propio del tenant (si no tiene uno
+     * cargado, la guía de prueba fallará al firmar; eso queda fuera de este fallback).
+     *
+     * Producción: SUNAT API (URLs oficiales + CLIENT_ID/SECRET/SOL/certificado por empresa).
      *
      * @throws EmpresaNoRegistradaException
      */
@@ -86,15 +93,42 @@ class SeeApiFactory
             }
         }
 
-        [$rucPart, $user] = $this->getRucAndUser($companyConfig['SOL_USER']);
+        [$rucPart, $user, $solPass] = $this->resolveGreSol($isProd, $companyConfig);
         $endpoints = $this->resolveEndpoints($isProd);
         $api = new Api($endpoints);
         $api->setBuilderOptions(['cache' => $this->cacheDir]);
-        $api->setClaveSOL($rucPart, $user, $companyConfig['SOL_PASS']);
+        $api->setClaveSOL($rucPart, $user, $solPass);
+        // Certificado: siempre el propio del tenant, en ambos ambientes (ver nota en build()).
         $api->setCertificate($this->fileReader->getContents($companyConfig['certificate']));
         $api->setApiCredentials($clientId, $clientSecret);
 
         return $api;
+    }
+
+    /**
+     * SOL para autenticar contra el proveedor GRE REST (OAuth2 password grant).
+     *
+     * Producción: el SOL real de la empresa (companies.json, sincronizado desde su ficha).
+     * Pruebas: el SOL_USER/SOL_PASS del .env del facturador — la cuenta de sandbox de NubeFact,
+     * no la del tenant. Se ignora a propósito lo que haya en companies.json para este par: es
+     * el mismo criterio que ya aplica CLIENT_ID/CLIENT_SECRET arriba.
+     *
+     * @param array<string, mixed> $companyConfig
+     * @return array{0: string, 1: string, 2: string} [rucPart, user, password]
+     */
+    private function resolveGreSol(bool $isProd, array $companyConfig): array
+    {
+        if ($isProd) {
+            [$rucPart, $user] = $this->getRucAndUser((string) ($companyConfig['SOL_USER'] ?? ''));
+            $pass = (string) ($companyConfig['SOL_PASS'] ?? '');
+
+            return [$rucPart, $user, $pass];
+        }
+
+        [$rucPart, $user] = $this->getRucAndUser(trim((string) $this->config->get('SOL_USER')));
+        $pass = trim((string) $this->config->get('SOL_PASS'));
+
+        return [$rucPart, $user, $pass];
     }
 
     /**
