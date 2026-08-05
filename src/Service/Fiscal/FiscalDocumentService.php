@@ -75,9 +75,16 @@ class FiscalDocumentService
         $fingerprint = FiscalFingerprint::build($tenantId, $docType, $series, $number, $saleId);
         $automatic = ($payload['automatic_send'] ?? true) !== false;
 
+        // Reemisión: corrección de soporte que reenvía un comprobante ya aceptado
+        // con otra fecha de emisión (típicamente porque la aceptación fue contra
+        // beta y no vale en producción). Es el único caso en que se sobrescribe el
+        // snapshot de un documento aceptado, y llega solo desde el endpoint del
+        // backend protegido por acceso maestro.
+        $reissue = ($payload['reissue'] ?? false) === true;
+
         $existing = $this->repo->findOneBy(['fiscalFingerprint' => $fingerprint]);
         if ($existing !== null) {
-            if ($existing->getStatus() === FiscalDocument::STATUS_ACCEPTED) {
+            if ($existing->getStatus() === FiscalDocument::STATUS_ACCEPTED && !$reissue) {
                 return $existing;
             }
             if (in_array($existing->getStatus(), [
@@ -119,6 +126,10 @@ class FiscalDocumentService
             $doc->setSaleId($saleId);
             $doc->setFiscalFingerprint($fingerprint);
             $this->em->persist($doc);
+        }
+
+        if ($reissue && $existing !== null) {
+            $doc->setReissueCount($doc->getReissueCount() + 1);
         }
 
         $doc->setDocumentType($docType);

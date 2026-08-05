@@ -74,6 +74,19 @@ class FiscalDocument
     /** @ORM\Column(type="string", length=20, nullable=true) */
     private ?string $sunatMode = null;
 
+    /**
+     * Ambiente del primer envío a SUNAT. sunatMode refleja el último intento y se
+     * reescribe en cada reintento, así que al reemitir en producción un documento
+     * emitido contra beta se perdería el rastro de dónde nació. Se escribe una
+     * sola vez y no vuelve a tocarse.
+     *
+     * @ORM\Column(type="string", length=20, nullable=true)
+     */
+    private ?string $originalSunatMode = null;
+
+    /** @ORM\Column(type="integer", options={"default":0}) */
+    private int $reissueCount = 0;
+
     /** @ORM\Column(type="string", length=255, nullable=true) */
     private ?string $customerEmail = null;
 
@@ -204,6 +217,10 @@ class FiscalDocument
     public function setSendMode(?string $v): self { $this->sendMode = $v; return $this; }
     public function getSunatMode(): ?string { return $this->sunatMode; }
     public function setSunatMode(?string $v): self { $this->sunatMode = $v; return $this; }
+    public function getOriginalSunatMode(): ?string { return $this->originalSunatMode; }
+    public function setOriginalSunatMode(?string $v): self { $this->originalSunatMode = $v; return $this; }
+    public function getReissueCount(): int { return $this->reissueCount; }
+    public function setReissueCount(int $v): self { $this->reissueCount = $v; return $this; }
     public function getCustomerEmail(): ?string { return $this->customerEmail; }
     public function setCustomerEmail(?string $v): self { $this->customerEmail = $v; return $this; }
     public function getQueuedAt(): ?\DateTimeInterface { return $this->queuedAt; }

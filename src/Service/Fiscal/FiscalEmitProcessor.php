@@ -111,7 +111,15 @@ class FiscalEmitProcessor
 
             $doc->setSendMode($empresa->getSendMode());
             $doc->setProvider($empresa->getProvider());
-            $doc->setSunatMode(strtolower(trim($empresa->getAmbiente())) === 'produccion' ? 'production' : 'beta');
+
+            $sunatMode = strtolower(trim($empresa->getAmbiente())) === 'produccion' ? 'production' : 'beta';
+            $doc->setSunatMode($sunatMode);
+            // El ambiente de origen se fija en el primer intento y no se reescribe:
+            // es lo que permite distinguir después un comprobante nacido en beta de
+            // uno emitido en producción, aunque se reemita.
+            if ($doc->getOriginalSunatMode() === null) {
+                $doc->setOriginalSunatMode($sunatMode);
+            }
 
             $providerName = $this->providerResolver->resolveName($doc, $empresa);
             $doc->setProvider($providerName);
