@@ -106,6 +106,19 @@ class SeeApiFactory
     }
 
     /**
+     * RUC de la cuenta de pruebas NubeFact (.env SOL_USER), usado también como fallback del RUC
+     * emisor DENTRO del documento en modo pruebas: el sandbox de NubeFact rechaza con un 500
+     * genérico ("Error inesperado") cualquier guía cuyo RUC emisor no coincida con el RUC del
+     * SOL_USER autenticado (igual que el beta clásico de SUNAT exige RUC=20161515648 con MODDATOS).
+     */
+    public function getPruebasSolRucPart(): string
+    {
+        [$rucPart] = $this->getRucAndUser(trim((string) $this->config->get('SOL_USER')));
+
+        return $rucPart;
+    }
+
+    /**
      * SOL para autenticar contra el proveedor GRE REST (OAuth2 password grant).
      *
      * Producción: el SOL real de la empresa (companies.json, sincronizado desde su ficha).

@@ -116,11 +116,25 @@ class NubefactGreProvider extends AbstractFiscalProvider
             throw new \InvalidArgumentException('NubefactGreProvider solo emite guías de remisión');
         }
         $ruc = trim((string) $greenterDoc->getCompany()->getRuc());
+        $isProd = strtolower(trim($empresa->getAmbiente())) === 'produccion';
         try {
-            $see = $this->seeApiFactory->build($ruc);
-            $result = $see->send($greenterDoc);
-        } catch (\Throwable $e) {
-            throw new \RuntimeException($this->formatGreAuthError($e, $empresa), 0, $e);
+            if (!$isProd) {
+                // Sandbox NubeFact: el RUC emisor DENTRO del documento debe coincidir con el RUC
+                // del SOL_USER de pruebas (.env), o rechaza con 500 "Error inesperado" genérico.
+                // Solo afecta el documento enviado a NubeFact; no se toca el snapshot persistido
+                // ni el certificado (que sigue siendo el propio del tenant). Se restaura el RUC
+                // real justo después del envío (finally) porque $greenterDoc es reutilizado
+                // luego para el PDF, cuyo lookup de empresa/logo necesita el RUC real del tenant.
+                $greenterDoc->getCompany()->setRuc($this->seeApiFactory->getPruebasSolRucPart());
+            }
+            try {
+                $see = $this->seeApiFactory->build($ruc);
+                $result = $see->send($greenterDoc);
+            } catch (\Throwable $e) {
+                throw new \RuntimeException($this->formatGreAuthError($e, $empresa), 0, $e);
+            }
+        } finally {
+            $greenterDoc->getCompany()->setRuc($ruc);
         }
         $signedXml = $see->getLastXml();
 
