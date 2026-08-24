@@ -78,7 +78,13 @@ class FiscalEmitProcessor
 
     public function process(FiscalDocument $doc): void
     {
-        if ($doc->getStatus() === FiscalDocument::STATUS_ACCEPTED) {
+        // Idempotencia: ACCEPTED y OBSERVED son ambos estados terminales (retryable=false,
+        // ver más abajo). Si solo se comprobaba ACCEPTED, un documento aceptado-con-observación
+        // podía volver a enviarse ante una segunda invocación de process() (job duplicado, doble
+        // clic en "reintentar", carrera entre workers) — SUNAT lo rechaza como comprobante
+        // duplicado (1033) y esa respuesta terminaba pisando el estado ya aceptado. Bug real
+        // que produjo un reenvío indebido de una guía de remisión ya aceptada (ago 2026).
+        if (in_array($doc->getStatus(), [FiscalDocument::STATUS_ACCEPTED, FiscalDocument::STATUS_OBSERVED], true)) {
             return;
         }
 

@@ -421,9 +421,14 @@ class FiscalCdrRecoveryService
     }
 
     /**
+     * Pública a propósito: permite aplicar un CDR ya obtenido/verificado por otra vía (p. ej.
+     * recuperación manual para guías GRE 09/31, que no usan ConsultCdrService SOAP como
+     * factura/boleta y por eso no pasan por consultSunatDirect()). Misma lógica que usa
+     * recover() para documentos que sí soportan la consulta SOAP.
+     *
      * @return array{found: bool, applied: bool, accepted: bool, status: string, sunat_code: ?string, sunat_message: ?string, message: string}
      */
-    private function applyRecoveredCdr(FiscalDocument $doc, string $cdrZip, CdrResponse $cdrResponse): array
+    public function applyRecoveredCdr(FiscalDocument $doc, string $cdrZip, CdrResponse $cdrResponse): array
     {
         $classified = SunatCdrClassifier::fromCdrResponse($cdrResponse);
 

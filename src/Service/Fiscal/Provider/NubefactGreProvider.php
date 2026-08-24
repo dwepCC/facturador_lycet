@@ -164,6 +164,13 @@ class NubefactGreProvider extends AbstractFiscalProvider
             $out->success = $classified['success'];
             $out->rejected = $classified['rejected'];
             $out->observed = $classified['observed'];
+            // Guía ya informada a SUNAT en un envío previo (código 1033 y variantes): NO es un
+            // rechazo de negocio nuevo, es evidencia de que ya existe una aceptación anterior.
+            // Sin esto, un reenvío indebido (ver guard en FiscalEmitProcessor::process) termina
+            // clasificado como rechazo normal y pisa el estado ya aceptado/observado.
+            if (!$out->success && SunatDuplicateClassifier::isAlreadySubmitted($out->sunatCode, $out->sunatMessage)) {
+                $out->alreadySubmitted = true;
+            }
         } else {
             $out->sunatCode = $this->extractSunatCodeWithoutCdr($result);
             $out->sunatMessage = $this->extractSunatMessageWithoutCdr($result);
@@ -172,6 +179,9 @@ class NubefactGreProvider extends AbstractFiscalProvider
             $out->observed = false;
             if ($out->ticket !== null && $out->ticket !== '' && ($out->sunatMessage ?? '') === '') {
                 $out->success = true;
+            }
+            if (!$out->success && SunatDuplicateClassifier::isAlreadySubmitted($out->sunatCode, $out->sunatMessage)) {
+                $out->alreadySubmitted = true;
             }
         }
 
