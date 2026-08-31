@@ -666,9 +666,21 @@ class FiscalController extends AbstractController
         if ($value === null || $value === '') {
             return null;
         }
-        $dt = new \DateTimeImmutable((string) $value);
-        if ($endOfDay && !str_contains((string) $value, 'T') && !str_contains((string) $value, ' ')) {
+        $hasTime = str_contains((string) $value, 'T') || str_contains((string) $value, ' ');
+        // Un valor "solo fecha" (del selector de fecha del dashboard) representa un día en hora
+        // de Perú, no en la zona horaria por defecto del servidor (Europe/Berlin) ni en UTC.
+        // Interpretarlo con el timezone del servidor desplazaba el límite hasta 7 horas antes de
+        // medianoche real en Perú, colando en el filtro documentos del día anterior (bug real
+        // reportado: filtrar "29/08 al 30/08" mostraba comprobantes de la noche del 28/08).
+        // created_at se guarda en UTC, así que se arma en hora de Perú y se convierte a UTC.
+        $dt = $hasTime
+            ? new \DateTimeImmutable((string) $value)
+            : new \DateTimeImmutable((string) $value, new \DateTimeZone('America/Lima'));
+        if ($endOfDay && !$hasTime) {
             $dt = $dt->setTime(23, 59, 59, 999999);
+        }
+        if (!$hasTime) {
+            $dt = $dt->setTimezone(new \DateTimeZone('UTC'));
         }
 
         return $dt;
