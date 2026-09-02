@@ -528,6 +528,10 @@ class FiscalEmitProcessor
             $data = $data['document'];
         }
 
+        // Defensa en profundidad: por si el snapshot quedó guardado sin sanear
+        // (documentos previos a este fix) o llega alguna vez sin pasar por
+        // FiscalDocumentService::enqueue().
+        $data = FiscalTextSanitizer::sanitize($data);
         $data = DespatchSnapshotEnricher::enrich($data);
 
         $class = FiscalDocumentClassResolver::resolve($data, $doc);
