@@ -126,13 +126,18 @@ class SunatDirectProvider extends AbstractFiscalProvider
                     ? $out->sunatMessage
                     : 'CDR recibido sin detalle parseable';
             }
+            $faultCode = $this->extractSunatFaultCode($result);
+
             // SUNAT ya aceptó este comprobante antes (típico cuando se cayó sin devolver CDR).
             // No se debe reenviar: se marca para consultar el CDR (consulta de validez).
-            if (SunatDuplicateClassifier::isAlreadySubmitted(
-                $this->extractSunatFaultCode($result),
-                $out->sunatMessage
-            )) {
+            if (SunatDuplicateClassifier::isAlreadySubmitted($faultCode, $out->sunatMessage)) {
                 $out->alreadySubmitted = true;
+            } elseif (SunatTerminalFaultClassifier::isTerminal($faultCode, $out->sunatMessage)) {
+                // Rechazo definitivo sin CDR (ej. 1032: comprobante ya informado con estado
+                // anulado/rechazado). El correlativo quedó quemado: no reintentar.
+                $out->sunatCode = $faultCode ?? $out->sunatCode;
+                $out->rejected = true;
+                $out->errorType = 'business';
             }
         }
 
