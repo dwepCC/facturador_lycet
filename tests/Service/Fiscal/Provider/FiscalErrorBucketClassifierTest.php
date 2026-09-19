@@ -32,6 +32,29 @@ class FiscalErrorBucketClassifierTest extends TestCase
         );
     }
 
+    /**
+     * Casos reales del canal directo (sin código estructurado, solo mensaje) revisados con el
+     * usuario antes de aplicar la reclasificación histórica — sin estos needles caían en
+     * 'transient' por defecto aunque fueran rechazos de negocio genuinos.
+     *
+     * @dataProvider realDirectChannelBusinessMessages
+     */
+    public function testRealDirectChannelBusinessMessagesAreBusinessNotTransient(string $message): void
+    {
+        self::assertSame(FiscalErrorBucketClassifier::BUCKET_BUSINESS, FiscalErrorBucketClassifier::classify(null, $message));
+    }
+
+    public function realDirectChannelBusinessMessages(): array
+    {
+        return [
+            'XML no contiene el tag (usuario)' => ['El XML no contiene el tag o no existe información del usuario - Detalle: xxx'],
+            'XML no contiene tag (cantidad, doriconta F001-76)' => ['El XML no contiene tag de la cantidad del concepto por linea. - Detalle: xxx.xxx.xxx value=\'ticket: 1789836587644 error: Error en la linea: 1 ConceptoItem 3006: 3135 (nodo: "/" valor: "")\''],
+            'debe consignarse (industrialrafaz F001-126)' => ['Si el tipo de transaccion es al Credito debe consignarse el Monto neto pendiente de pago - Detalle: xxx.xxx.xxx value=\'ticket: 1789837119371 error: INFO: 3251 (nodo: "/" valor: "")\''],
+            'fecha no puede ser anterior' => ['Fecha del pago único o de las cuotas no puede ser anterior a la fecha de emisión'],
+            'difiere de los importes' => ['El valor de venta por ítem difiere de los importes consignados en el comprobante'],
+        ];
+    }
+
     public function testCode0111IsManualOnlyBothChannels(): void
     {
         // PSE (JSON): "No tiene el perfil para enviar comprobantes electronicos - Rejected by policy."

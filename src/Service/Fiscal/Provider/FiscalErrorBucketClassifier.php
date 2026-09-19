@@ -53,13 +53,26 @@ final class FiscalErrorBucketClassifier
     ];
 
     /**
-     * Heredado de SunatTerminalFaultClassifier::TERMINAL_NEEDLES — mismo caso que
+     * Fragmentos heredados de SunatTerminalFaultClassifier::TERMINAL_NEEDLES — mismo caso que
      * BUSINESS_CODES_BELOW_2000, cuando el código no viene limpio y solo hay mensaje.
      */
     private const BUSINESS_NEEDLES = [
         'estado anulado o rechazado',
         'con estado anulado',
         'con estado rechazado',
+        // Rechazos de negocio reales del canal directo (sección 13.11.1/13.11.6 del plan) —
+        // ese canal nunca guardó un código estructurado para el fault histórico, solo el
+        // mensaje de SUNAT, así que sin estos needles caían por defecto en 'transient' (código
+        // vacío) aunque el contenido del comprobante sí fuera lo que estaba mal. Evidencia real:
+        //  - "El XML no contiene el tag o no existe información del usuario..." (4 docs)
+        //  - "El XML no contiene tag de la cantidad del concepto por linea..." (2 docs, doriconta)
+        //  - "Si el tipo de transaccion es al Credito debe consignarse el Monto neto..." (2 docs)
+        //  - "Fecha del pago unico o de las cuotas no puede ser anterior..." (2 docs)
+        //  - "El valor de venta por item difiere de los importes consignados..." (1 doc)
+        'xml no contiene',
+        'debe consignarse',
+        'no puede ser anterior',
+        'difiere de los importes',
     ];
 
     public static function classify(?string $code, ?string $message = null): string
