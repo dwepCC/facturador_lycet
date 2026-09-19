@@ -20,6 +20,27 @@ final class PseResponseFormatter
             }
         }
 
+        // ValidaPSE devuelve el detalle real en `errores` (plural, español) — no documentado
+        // así en la referencia de la API (sección 6 del plan), pero es lo que la API real envía.
+        // El campo puede venir como string ("El comprobante fue...") o como arreglo (vacío []
+        // en respuestas exitosas, o de strings con detalle en respuestas de error).
+        if (isset($resp['errores'])) {
+            if (is_string($resp['errores']) && trim($resp['errores']) !== '') {
+                return trim($resp['errores']);
+            }
+            if (is_array($resp['errores'])) {
+                $parts = [];
+                foreach ($resp['errores'] as $item) {
+                    if (is_string($item) && trim($item) !== '') {
+                        $parts[] = trim($item);
+                    }
+                }
+                if ($parts !== []) {
+                    return implode(' | ', $parts);
+                }
+            }
+        }
+
         return '';
     }
 

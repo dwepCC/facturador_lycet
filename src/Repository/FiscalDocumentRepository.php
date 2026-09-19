@@ -246,8 +246,8 @@ class FiscalDocumentRepository extends ServiceEntityRepository
                 case 'rejected':
                     $qb->andWhere('d.status = :grej')->setParameter('grej', FiscalDocument::STATUS_REJECTED);
                     break;
-                case 'action': // Requiere acción: error permanente (o error sin tipo, legado)
-                    $qb->andWhere("d.status = 'error' AND (d.errorType = 'permanent' OR d.errorType IS NULL)");
+                case 'action': // Requiere acción: error permanente, manual_only, o sin tipo (legado)
+                    $qb->andWhere("d.status = 'error' AND (d.errorType = 'permanent' OR d.errorType = 'manual_only' OR d.errorType IS NULL)");
                     break;
                 case 'cancelled':
                     $qb->andWhere('d.status = :gcan')->setParameter('gcan', FiscalDocument::STATUS_CANCELLED);
@@ -391,6 +391,53 @@ class FiscalDocumentRepository extends ServiceEntityRepository
             ->setParameter('now', $now)
             ->setParameter('notBefore', $notBefore)
             ->setParameter('notAfter', $notAfter)
+            ->orderBy('d.id', 'ASC')
+            ->setMaxResults(max(1, $limit))
+            ->getQuery()
+            ->getResult();
+    }
+
+    /**
+     * Documentos PSE marcados `rejected` con la lógica anterior al fix de las secciones 12-14
+     * del plan (typo `errores`, código embebido mal extraído, sin distinguir bucket) — universo
+     * del comando de reclasificación histórica (Fase 7). Solo lectura para ese comando; no se
+     * usa en ningún flujo en vivo.
+     *
+     * @return FiscalDocument[]
+     */
+    public function findPseRejectedForReclassification(int $limit = 1000): array
+    {
+        return $this->createQueryBuilder('d')
+            ->andWhere('d.sendMode = :mode')
+            ->andWhere('d.status = :status')
+            ->setParameter('mode', 'pse')
+            ->setParameter('status', FiscalDocument::STATUS_REJECTED)
+            ->orderBy('d.id', 'ASC')
+            ->setMaxResults(max(1, $limit))
+            ->getQuery()
+            ->getResult();
+    }
+
+    /**
+     * Documentos del canal directo que agotaron reintentos bajo la lógica anterior al fix de
+     * la sección 13.11 del plan (límite de 20 en vez de 5, sin distinguir manual_only/permanent)
+     * — universo del comando de reclasificación histórica (Fase 7). `retry_count >= 5` porque
+     * ese es el nuevo tope real (sección 14.1); cualquier documento que ya lo alcanzó bajo el
+     * límite viejo quedó, en la práctica, indefinidamente reintentando sin poder tener éxito.
+     *
+     * @return FiscalDocument[]
+     */
+    public function findExhaustedTransientDirectChannel(int $limit = 1000): array
+    {
+        return $this->createQueryBuilder('d')
+            ->andWhere('(d.sendMode IS NULL OR d.sendMode != :mode)')
+            ->andWhere('d.status IN (:statuses)')
+            ->andWhere('d.errorType = :etype')
+            ->andWhere('d.retryCount >= :minRetries')
+            ->setParameter('mode', 'pse')
+            ->setParameter('statuses', [FiscalDocument::STATUS_ERROR, FiscalDocument::STATUS_RETRYING])
+            ->setParameter('etype', FiscalDocument::ERROR_TRANSIENT)
+            ->setParameter('minRetries', 5)
             ->orderBy('d.id', 'ASC')
             ->setMaxResults(max(1, $limit))
             ->getQuery()

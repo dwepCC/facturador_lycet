@@ -150,10 +150,21 @@ class FiscalEmitProcessor
                 return;
             }
 
-            // SUNAT/PSE indica que el comprobante ya fue informado anteriormente:
-            // NO reenviar. Consultar el CDR (consulta de validez) y actualizar estado.
+            // SUNAT/PSE indica que el comprobante ya fue informado anteriormente (intento
+            // ANTERIOR, ej. 1033): NO reenviar. Consultar el CDR y actualizar estado.
             if ($result->alreadySubmitted) {
                 $this->handleAlreadySubmitted($doc, $result, $providerName, $attemptNum, $started, $empresa);
+                if ($doc->getFiscalFingerprint()) {
+                    $this->queue->releaseClaim($doc->getFiscalFingerprint());
+                }
+                return;
+            }
+
+            // PSE confirmó éxito de ESTE envío pero sin CDR real embebido: no es lo mismo
+            // que "ya informado antes" (arriba) ni una aceptación — queda enviado, pendiente
+            // de CDR (14.2/14.3, regla 4 del usuario: isSuccess no implica alreadySubmitted).
+            if ($result->sentPendingCdr) {
+                $this->handleSentPendingCdr($doc, $result, $providerName, $attemptNum, $started);
                 if ($doc->getFiscalFingerprint()) {
                     $this->queue->releaseClaim($doc->getFiscalFingerprint());
                 }
@@ -163,7 +174,20 @@ class FiscalEmitProcessor
             $signedXml = $result->signedXml ?? '';
             if ($signedXml === '') {
                 if (!empty($result->pseResponse)) {
-                    $this->handlePseBusinessResult($doc, $result, $providerName, $attemptNum, $started);
+                    if ($result->errorType === FiscalDocument::ERROR_TRANSIENT) {
+                        // Transitorio real (0109/0100/0154/Server Error, sección 12.3): mismo
+                        // camino de reintento automático que una falla de conexión, con el
+                        // mismo tope de 5 intentos — NO es un rechazo, no se marca como tal.
+                        $this->recordAttempt($doc, $attemptNum, $providerName, FiscalDocument::STATUS_RETRYING, $result, null, $started);
+                        $this->applyFailure($doc, $empresa, FiscalDocument::ERROR_TRANSIENT, $result->pseMessage, $attemptNum, $started);
+                    } elseif ($result->errorType === 'manual_only') {
+                        // No se resuelve reintentando solo (perfil SOL, nombre de archivo,
+                        // fuera de fecha, no identificado) — nunca se auto-programa reintento.
+                        $this->handleManualOnlyResult($doc, $result, $providerName, $attemptNum, $started);
+                    } else {
+                        // 'business': rechazo real de negocio, terminal.
+                        $this->handlePseBusinessResult($doc, $result, $providerName, $attemptNum, $started);
+                    }
                     if ($doc->getFiscalFingerprint()) {
                         $this->queue->releaseClaim($doc->getFiscalFingerprint());
                     }
@@ -234,6 +258,17 @@ class FiscalEmitProcessor
                 $doc->setRejectedAt(new \DateTimeImmutable());
                 $doc->setErrorType(FiscalDocument::ERROR_BUSINESS);
                 $doc->setRetryable(false);
+            } elseif ($result->errorType === 'manual_only') {
+                // No se resuelve reintentando solo. Llega aquí sobre todo desde el canal
+                // directo (Fase 3) — ahí `signedXml` casi siempre existe aunque el envío
+                // falle, así que rara vez entra por la rama `if ($signedXml === '')` de
+                // arriba. Sin esta rama, `errorType='manual_only'` caía en el `else`
+                // transitorio de abajo y se reintentaba solo igual (13.11.4 del plan).
+                $this->handleManualOnlyResult($doc, $result, $providerName, $attemptNum, $started);
+                if ($doc->getFiscalFingerprint()) {
+                    $this->queue->releaseClaim($doc->getFiscalFingerprint());
+                }
+                return;
             } else {
                 // Sin veredicto de SUNAT (CDR nulo / excepción de sistema 0100-1999): falla
                 // TRANSITORIA → se reintenta hasta que SUNAT acepte, observe o rechace.
@@ -412,34 +447,7 @@ class FiscalEmitProcessor
         float $started,
         Empresa $empresa
     ): void {
-        // Asegurar el XML firmado persistido (por si un intento previo no llegó a guardarlo).
-        $signedXml = trim((string) ($result->signedXml ?? ''));
-        if ($signedXml !== '' && ($doc->getXmlSignedUrl() === null || $doc->getXmlSignedUrl() === '')) {
-            try {
-                $stored = $this->storage->store(
-                    $doc->getTenantSlug(),
-                    $doc->getDocumentType(),
-                    $doc->getSeries(),
-                    $doc->getNumber(),
-                    $result->unsignedXml,
-                    $signedXml,
-                    null,
-                    $result->pdf
-                );
-                $doc->setXmlUrl($stored['xml_url']);
-                $doc->setUnsignedXmlUrl($stored['unsigned_xml_url']);
-                $doc->setXmlSignedUrl($stored['xml_signed_url']);
-                if ($result->hash !== null && $result->hash !== '') {
-                    $doc->setHash($result->hash);
-                }
-                $this->em->flush();
-            } catch (\Throwable $e) {
-                $this->logger->warning('fiscal_already_submitted_store_signed_failed', [
-                    'uuid' => $doc->getDocumentUuid(),
-                    'error' => $e->getMessage(),
-                ]);
-            }
-        }
+        $this->storeSignedXmlIfMissing($doc, $result, 'fiscal_already_submitted_store_signed_failed');
 
         if ($doc->getSentAt() === null) {
             $doc->setSentAt(new \DateTimeImmutable());
@@ -460,6 +468,117 @@ class FiscalEmitProcessor
         $this->recordAttempt($doc, $attemptNum, $providerName, FiscalDocument::STATUS_ERROR, $result, null, $started);
         $this->em->flush();
         $this->notifyOrEnqueueSync($doc);
+    }
+
+    /**
+     * PSE confirmó éxito de ESTE envío (isSuccess:true) pero sin CDR real embebido en la
+     * respuesta. No es "ya informado antes" ($alreadySubmitted, que requiere evidencia
+     * concreta vía SunatDuplicateClassifier) ni una aceptación (eso exige un CdrResponse
+     * real clasificado por SunatCdrClassifier) — es este mismo intento, recibido por el PSE,
+     * con el CDR de SUNAT todavía pendiente. No se reenvía (evita duplicar el envío) y no se
+     * fabrica ningún código de aceptación: el documento queda `STATUS_SENT`, retryable=false,
+     * disponible para que una persona use "Consultar CDR" cuando quiera verificar el
+     * resultado real (regla 4 de la sección 14 del plan).
+     */
+    private function handleSentPendingCdr(
+        FiscalDocument $doc,
+        FiscalEmitResult $result,
+        string $providerName,
+        int $attemptNum,
+        float $started
+    ): void {
+        $this->storeSignedXmlIfMissing($doc, $result, 'fiscal_sent_pending_cdr_store_signed_failed');
+
+        $doc->setSentAt($doc->getSentAt() ?? new \DateTimeImmutable());
+        $doc->setStatus(FiscalDocument::STATUS_SENT);
+        $doc->setErrorType(null);
+        $doc->setRetryable(false);
+        $doc->setNextRetryAt(null);
+        if ($result->sunatCode !== null && $result->sunatCode !== '') {
+            $doc->setSunatCode($result->sunatCode);
+        }
+        $doc->setSunatMessage(trim(
+            'Enviado al proveedor (PSE); SUNAT aún no devolvió el CDR real. '
+            . 'Use "Consultar CDR" para verificar el resultado. '
+            . (string) ($result->sunatMessage ?? '')
+        ));
+        if (!empty($result->pseResponse)) {
+            $doc->setPseResponseJson(json_encode($result->pseResponse, JSON_UNESCAPED_UNICODE) ?: null);
+        }
+        $this->recordAttempt($doc, $attemptNum, $providerName, FiscalDocument::STATUS_SENT, $result, null, $started);
+        $this->em->flush();
+        $this->notifyOrEnqueueSync($doc);
+    }
+
+    /**
+     * SUNAT/PSE respondió, pero el motivo (`errorType='manual_only'`, vía
+     * FiscalErrorBucketClassifier — ej. perfil SOL sin habilitar código 0111, nombre de
+     * archivo, fuera de fecha, o código no identificado) no se resuelve reintentando el
+     * envío solo. Nunca se programa un reintento automático (ni ZSET rápido ni el barrido de
+     * huérfanos, porque `errorType` no queda en 'transient') — queda disponible para que una
+     * persona decida reenviar manualmente desde el dashboard cuando corresponda.
+     */
+    private function handleManualOnlyResult(
+        FiscalDocument $doc,
+        FiscalEmitResult $result,
+        string $providerName,
+        int $attemptNum,
+        float $started
+    ): void {
+        $this->storeSignedXmlIfMissing($doc, $result, 'fiscal_manual_only_store_signed_failed');
+
+        $doc->setSentAt($doc->getSentAt() ?? new \DateTimeImmutable());
+        if ($result->sunatCode !== null && $result->sunatCode !== '') {
+            $doc->setSunatCode($result->sunatCode);
+        }
+        $doc->setSunatMessage(($result->sunatMessage ?? $result->pseMessage) ?: 'Requiere revisión manual del documento');
+        $doc->setStatus(FiscalDocument::STATUS_ERROR);
+        $doc->setErrorType('manual_only');
+        $doc->setRetryable(true);
+        $doc->setNextRetryAt(null);
+        if (!empty($result->pseResponse)) {
+            $doc->setPseResponseJson(json_encode($result->pseResponse, JSON_UNESCAPED_UNICODE) ?: null);
+        }
+        $this->recordAttempt($doc, $attemptNum, $providerName, FiscalDocument::STATUS_ERROR, $result, null, $started);
+        $this->em->flush();
+        $this->notifyOrEnqueueSync($doc);
+    }
+
+    /**
+     * Guarda el XML firmado si el documento todavía no lo tiene persistido — común a los
+     * caminos que interceptan la emisión antes del guardado normal (ya informado, enviado
+     * pendiente de CDR). No falla el flujo si el guardado falla: solo se registra el warning.
+     */
+    private function storeSignedXmlIfMissing(FiscalDocument $doc, FiscalEmitResult $result, string $logEvent): void
+    {
+        $signedXml = trim((string) ($result->signedXml ?? ''));
+        if ($signedXml === '' || ($doc->getXmlSignedUrl() !== null && $doc->getXmlSignedUrl() !== '')) {
+            return;
+        }
+        try {
+            $stored = $this->storage->store(
+                $doc->getTenantSlug(),
+                $doc->getDocumentType(),
+                $doc->getSeries(),
+                $doc->getNumber(),
+                $result->unsignedXml,
+                $signedXml,
+                null,
+                $result->pdf
+            );
+            $doc->setXmlUrl($stored['xml_url']);
+            $doc->setUnsignedXmlUrl($stored['unsigned_xml_url']);
+            $doc->setXmlSignedUrl($stored['xml_signed_url']);
+            if ($result->hash !== null && $result->hash !== '') {
+                $doc->setHash($result->hash);
+            }
+            $this->em->flush();
+        } catch (\Throwable $e) {
+            $this->logger->warning($logEvent, [
+                'uuid' => $doc->getDocumentUuid(),
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**
@@ -586,21 +705,31 @@ class FiscalEmitProcessor
     }
 
     /** Errores de certificado/firma no se resuelven reintentando. */
-    /** Tope de reintentos rápidos (cola con backoff). Configurable por FISCAL_MAX_RETRIES. */
+    /**
+     * Tope de intentos TOTALES de envío (incluye el primero). Configurable por
+     * FISCAL_MAX_RETRIES — el nombre de la variable de entorno se conserva por
+     * compatibilidad, aunque ahora limita intentos totales, no "reintentos" adicionales.
+     * Regla cerrada en la sección 14.1 del plan: intento 1 (envío inicial) + hasta 4
+     * reintentos automáticos = 5 intentos totales. Al agotarse, ver applyFailure().
+     */
     private function maxRetries(): int
     {
         $v = (int) (getenv('FISCAL_MAX_RETRIES') ?: ($_ENV['FISCAL_MAX_RETRIES'] ?? 0));
 
-        return $v > 0 ? $v : 20;
+        return $v > 0 ? $v : 5;
     }
 
     /**
      * Aplica una falla NO terminal (transitoria o permanente):
      *  - Fija error_type y retry_count.
-     *  - Si es transitoria y hay cupo de reintentos rápidos → STATUS_RETRYING + backoff (cola ZSET).
-     *  - Si se agotan los reintentos rápidos y es transitoria → STATUS_ERROR con retryable=true y
-     *    next_retry_at futuro: el reconcile lo re-encola periódicamente hasta que SUNAT/PSE dé veredicto.
-     *  - Si es permanente → STATUS_ERROR con retryable=false (requiere acción manual; el reconcile lo ignora).
+     *  - Si es transitoria y hay cupo de intentos (retry_count < maxRetries(), 5 por
+     *    defecto) → STATUS_RETRYING + backoff (cola ZSET) → reintento automático real.
+     *  - Si se agotan los 5 intentos totales, sea transitoria o permanente → STATUS_ERROR
+     *    con retryable=false y next_retry_at=null: ningún camino automático (ZSET,
+     *    FiscalOrphanRepairService) vuelve a tocarlo. Disponible solo para reenvío manual
+     *    desde el dashboard (no depende de `retryable`, ver FiscalController::retry()).
+     *    Antes de la sección 14 del plan, el caso transitorio agotado quedaba
+     *    `retryable=true` con reintento lento indefinido cada 900s — eliminado.
      */
     private function applyFailure(
         FiscalDocument $doc,
@@ -643,20 +772,23 @@ class FiscalEmitProcessor
             return;
         }
 
+        // Terminal: ya sea permanente desde el inicio, o transitorio con los 5 intentos
+        // agotados — en ambos casos, ningún proceso automático debe volver a encolarlo
+        // (sección 14.1 del plan). Disponible únicamente para reenvío manual.
         $doc->setStatus(FiscalDocument::STATUS_ERROR);
-        if ($permanent) {
-            $doc->setRetryable(false);
-            $doc->setNextRetryAt(null);
-        } else {
-            // Reintento lento vía reconcile hasta veredicto definitivo de SUNAT/PSE.
-            $doc->setRetryable(true);
-            $doc->setNextRetryAt((new \DateTimeImmutable())->modify('+900 seconds'));
-        }
+        $doc->setRetryable(false);
+        $doc->setNextRetryAt(null);
         $this->em->flush();
         $this->notifyOrEnqueueSync($doc);
     }
 
-    private function isNonRetryableEmitError(string $message): bool
+    /**
+     * Pública a propósito: la reutiliza el comando de reclasificación histórica
+     * (app:fiscal:reclassify-historical, Fase 7 del plan) para re-evaluar documentos del
+     * canal directo con los mismos patrones ya corregidos — no se duplica esta lista en
+     * ningún otro lugar.
+     */
+    public function isNonRetryableEmitError(string $message): bool
     {
         $m = strtolower($message);
         foreach ([
@@ -669,10 +801,23 @@ class FiscalEmitProcessor
             'clave privada',
             'cliente no autorizado',
             'token gre rechazado',
+            // Excepciones PHP que ni llegan a contactar a SUNAT — nunca se resuelven
+            // reintentando el mismo envío (13.11.5 del plan, evidencia real: documentos con
+            // 174-203 reintentos acumulados sin poder tener éxito nunca).
+            'deshabilitada o no registrada', // EmpresaNoRegistradaException (mensaje de FiscalEmitProcessor)
+            'no registrada para el ruc indicado', // EmpresaNoRegistradaException (mensaje por defecto, SeeFactory/SeeApiFactory)
+            'no tiene configuradas las credenciales', // SeeApiFactory, credenciales GRE faltantes
+            'invalid datetime', // bug de formato de fecha en el snapshot/documento
         ] as $needle) {
             if (str_contains($m, $needle)) {
                 return true;
             }
+        }
+
+        // HTTP 401/403 de la API REST de guías (api-cpe.sunat.gob.pe vía SeeApiFactory,
+        // Guzzle ClientException) — credenciales/token inválidos, no una caída de red.
+        if (preg_match('/\[40[13]\]\s*client error/i', $m) === 1) {
+            return true;
         }
 
         return false;

@@ -114,6 +114,22 @@ class FiscalBulkActionService
         if ($doc->getStatus() === FiscalDocument::STATUS_ACCEPTED && in_array($action, ['send', 'retry'], true)) {
             return true;
         }
+        // No desperdiciar una acción masiva de reenvío en documentos que no se van a
+        // resolver solo reintentando (rechazo real de negocio, requiere revisión manual, o
+        // config/certificado) — el error_type ya lo dice. 'transient' SÍ se deja pasar
+        // aunque esté agotado (retryable=false): reintentar manualmente después de una
+        // caída pasajera de SUNAT/PSE es exactamente el caso de uso de este botón. 'force'
+        // sigue sin ningún filtro, como override explícito (sección 14.1.1 del plan).
+        if (in_array($action, ['send', 'retry'], true)
+            && $doc->getStatus() === FiscalDocument::STATUS_ERROR
+            && in_array($doc->getErrorType(), [
+                FiscalDocument::ERROR_BUSINESS,
+                FiscalDocument::ERROR_PERMANENT,
+                'manual_only',
+            ], true)
+        ) {
+            return true;
+        }
         if ($action === 'email' && !$this->emailNormalizer->isDeliverable($this->emailNormalizer->resolveFromDocument($doc))) {
             return true;
         }

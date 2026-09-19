@@ -105,6 +105,7 @@
           <button class="btn btn-sky" id="btnPoll" type="button">Consultar ticket</button>
           <button class="btn btn-sky" id="btnConsultCdr" type="button" title="Consulta si el comprobante ya fue aceptado y recupera el CDR">Consultar CDR</button>
           <button class="btn btn-indigo" id="btnConsultSunat" type="button" style="display:none" title="Consulta la validez directamente en SUNAT (útil si el PSE falla)">Validar con SUNAT</button>
+          <button class="btn btn-emerald" id="btnAcceptWithoutCdr" type="button" style="display:none" title="Decisión manual: marca el comprobante como aceptado sin un CDR real de SUNAT. Revise la respuesta cruda de la última consulta antes de usar este botón.">Marcar como aceptado sin CDR</button>
         </div>
         <p id="emitActionHint" class="hint-muted" style="display:none" aria-live="polite"></p>
         <div class="actions">
@@ -195,7 +196,7 @@
       else if(st==='observed') title='Aceptado con observaciones';
       else if(st==='accepted') title='Aceptado por SUNAT';
       else if(st==='error') title='Error de emisión';
-      else if(st==='sent') title='Enviado — consulta de ticket pendiente o en curso';
+      else if(st==='sent') title=doc.ticket?'Enviado — consulta de ticket pendiente o en curso':'Enviado al proveedor — CDR de SUNAT pendiente de consulta';
 
       box.innerHTML=`
         <h3 class="sunat-outcome__title">${escapeHtml(title)}</h3>
@@ -427,7 +428,7 @@
       const pdfBadge=doc.pdf_available?'<span class="badge badge-ok">PDF listo</span>':(doc.pdf_can_generate?'<span class="badge badge-warn">PDF generable</span>':'<span class="badge">Sin PDF</span>');
       const cdrBadge=doc.has_cdr?'<span class="badge badge-ok">CDR ✓</span>':'<span class="badge">Sin CDR</span>';
       const g=fiscalGroup(doc.status,doc.error_type);
-      const etHint=doc.error_type?(doc.error_type==='transient'?' · se reintenta solo':(doc.error_type==='permanent'?' · requiere acción':' · rechazo SUNAT/PSE')):'';
+      const etHint=doc.error_type?(doc.error_type==='transient'?' · se reintenta solo':(doc.error_type==='permanent'?' · requiere acción':(doc.error_type==='manual_only'?' · requiere reenvío manual':' · rechazo SUNAT/PSE'))):'';
       qs('badges').innerHTML=`
         <span class="badge${g.cls}">${g.label}${etHint}</span>
         <span class="badge">${doc.send_mode||'—'}</span>
@@ -439,6 +440,7 @@
       renderTenantSync(doc);
       renderConsultDetail();
       toggleConsultButtons(doc);
+      toggleAcceptWithoutCdrButton(doc, d.pse_response);
       renderDocMeta(doc);
 
       qs('timeline').innerHTML=(d.timeline||[]).map(formatTimelineEvent).join('')||'<p class="hint-muted">Sin eventos.</p>';
@@ -614,6 +616,29 @@
       }
     }
 
+    async function acceptWithoutCdr(){
+      if(!selectedUuid)return;
+      const ok=confirm('¿Confirma marcar este comprobante como ACEPTADO sin un CDR real de SUNAT?\n\n'
+        +'Esta es una decisión manual — revise la respuesta cruda de la última consulta (arriba) antes de continuar.');
+      if(!ok)return;
+      const btn=qs('btnAcceptWithoutCdr');
+      const prev=btn.textContent;
+      btn.disabled=true; btn.textContent='Aplicando…';
+      try{
+        const r=await apiFetch(url('/documents/'+selectedUuid+'/accept-without-cdr'),{method:'POST'});
+        const body=await r.json();
+        if(!r.ok||!body.ok) throw new Error(body.message||body.error||'No se pudo aplicar la aceptación manual');
+        alert(body.message||'Comprobante marcado como aceptado.');
+        await detail(selectedUuid);
+        await loadStats();
+        await loadList();
+      }catch(e){
+        alert(e.message||'Error al aplicar la aceptación manual');
+      }finally{
+        btn.disabled=false; btn.textContent=prev;
+      }
+    }
+
     function toggleConsultButtons(doc){
       const isPse=(doc.send_mode||'').toLowerCase()==='pse';
       const bCdr=qs('btnConsultCdr'), bSunat=qs('btnConsultSunat');
@@ -627,6 +652,20 @@
         delete bCdr.dataset.via;
         bSunat.style.display='none';
       }
+    }
+
+    // Solo visible cuando la ÚLTIMA consulta persistida (FiscalCdrRecoveryService::
+    // persistConsultDetail(), sección 14 del plan) dijo "aceptado" pero sin CDR real, y el
+    // documento todavía no tiene un veredicto definitivo. Nunca aparece por defecto — reglas
+    // 2-4: ningún veredicto sin CDR mueve el estado solo, la persona decide con este botón.
+    function toggleAcceptWithoutCdrButton(doc, pseResponse){
+      const btn=qs('btnAcceptWithoutCdr');
+      if(!btn) return;
+      const st=String(doc.status||'').toLowerCase();
+      const definitivo=['accepted','observed','rejected','cancelled'].includes(st);
+      const lastConsult=(pseResponse||{}).last_consult;
+      const show=!!lastConsult && lastConsult.verdict==='accepted' && !definitivo;
+      btn.style.display=show?'inline-flex':'none';
     }
 
     function renderConsultDetail(){
@@ -720,6 +759,7 @@
     qs('btnPoll').onclick=()=>action('/poll');
     qs('btnConsultCdr').onclick=()=>consultCdr(qs('btnConsultCdr').dataset.via||undefined);
     qs('btnConsultSunat').onclick=()=>consultCdr('sunat');
+    qs('btnAcceptWithoutCdr').onclick=()=>acceptWithoutCdr();
 
     setDefaultDateRange();
     loadStats();

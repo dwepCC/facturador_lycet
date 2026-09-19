@@ -9,6 +9,7 @@ use App\Entity\FiscalDocument;
 use App\Repository\EmpresaRepository;
 use App\Service\Fiscal\Provider\PseAuthBuilder;
 use App\Service\Fiscal\Provider\PseProviderRegistry;
+use App\Service\Fiscal\Provider\PseResponseFormatter;
 use App\Service\Fiscal\Provider\SunatCdrClassifier;
 use App\Service\Fiscal\Provider\SunatValidityClassifier;
 use Doctrine\ORM\EntityManagerInterface;
@@ -57,13 +58,18 @@ class FiscalCdrRecoveryService
     }
 
     /**
-     * Consulta el CDR y, si está disponible, actualiza el documento.
+     * Consulta el CDR y, si es un CDR real, actualiza el documento.
      *
-     * @return array{found: bool, applied: bool, accepted: bool, status: string, sunat_code: ?string, sunat_message: ?string, message: string}
-     */
-    /**
+     * Regla cerrada en la sección 14 del plan (reglas 2-4): SOLO un CDR real, parseado y
+     * clasificado por SunatCdrClassifier, puede mover `status`. Ninguna otra señal — isSuccess
+     * de PSE, el campo `estado`, o un veredicto de texto vía SunatValidityClassifier — decide
+     * por sí sola, ni siquiera cuando "dice" que fue aceptado. Cuando no hay CDR real, la
+     * respuesta se persiste (persistConsultDetail()) y el documento queda disponible para la
+     * acción explícita acceptWithoutCdr() — nunca se aplica automáticamente desde aquí.
+     *
      * @param ?string $forceMode 'pse' o 'sunat' para forzar la vía de consulta; null = según el envío del doc.
      *                           Permite validar un comprobante PSE directo en SUNAT cuando el PSE falla.
+     * @return array{found: bool, applied: bool, accepted: bool, status: string, sunat_code: ?string, sunat_message: ?string, message: string}
      */
     public function recover(FiscalDocument $doc, ?string $forceMode = null): array
     {
@@ -82,15 +88,13 @@ class FiscalCdrRecoveryService
             : strtolower(trim((string) ($doc->getSendMode() ?? $empresa->getSendMode())));
 
         try {
-            if ($mode === 'pse') {
-                $consult = $this->consultPse($empresa, $doc, $ruc);
-            } else {
-                $consult = $this->consultSunatDirect($empresa, $doc, $ruc);
-            }
+            $consult = $mode === 'pse'
+                ? $this->consultPse($empresa, $doc, $ruc)
+                : $this->consultSunatDirect($empresa, $doc, $ruc);
         } catch (\Throwable $e) {
             $this->logger->warning('fiscal_cdr_recovery_failed', [
                 'uuid' => $doc->getDocumentUuid(),
-                'send_mode' => $sendMode,
+                'send_mode' => $mode,
                 'error' => $e->getMessage(),
             ]);
             return $this->result(false, false, false, $doc, 'Error consultando el CDR: ' . $e->getMessage());
@@ -101,26 +105,113 @@ class FiscalCdrRecoveryService
         // Respuesta CRUDA del proveedor (SUNAT/PSE) para mostrar exactamente qué respondió.
         $detail = (string) ($consult['provider_detail'] ?? ($consult['message'] ?? ''));
 
-        // 1) SUNAT/PSE devolvió el CDR → estado según el CDR (aceptado/observado/rechazado).
+        // 1) CDR real → único camino que puede mover `status` (regla 2 de la sección 14).
         if ($cdrResponse instanceof CdrResponse && $cdrZip !== null && $cdrZip !== '') {
             return $this->withDetail($this->applyRecoveredCdr($doc, $cdrZip, $cdrResponse), $detail);
         }
 
-        // 2) Sin CDR, pero el proveedor respondió: evaluar la VALIDEZ del comprobante.
-        //    Si confirma que existe y fue ACEPTADO, el comprobante es válido aunque no haya
-        //    CDR disponible → se marca aceptado igual (queda pendiente de sync manual al tenant).
-        //    El PSE puede entregar un veredicto directo (isSuccess); SUNAT directo se clasifica por mensaje.
+        // 2) Sin CDR real: NUNCA se cambia `status` automáticamente, sea cual sea el veredicto
+        //    de texto/isSuccess (reglas 2-4). Se persiste la respuesta cruda para que una
+        //    persona la lea y, si corresponde, use la acción explícita "Marcar como aceptado
+        //    sin CDR" (acceptWithoutCdr()) — nunca ocurre solo, como efecto de esta consulta.
         $statusCode = $consult['status_code'] ?? null;
         $statusMessage = (string) ($consult['status_message'] ?? '');
         $verdict = $consult['verdict'] ?? SunatValidityClassifier::classify($statusCode, $statusMessage);
-        if ($verdict === SunatValidityClassifier::ACCEPTED) {
-            return $this->withDetail($this->applyValidWithoutCdr($doc, $statusCode, $statusMessage), $detail);
-        }
+        $this->persistConsultDetail($doc, $mode, $consult, $verdict, $statusCode, $statusMessage);
 
-        // 3) No resuelto (no existe / rechazado sin CDR / en proceso / desconocido): se informa,
-        //    no se cambia a estado terminal sin evidencia. El mensaje orienta la acción.
         $msg = $this->describeUnresolved($verdict, $statusMessage, (string) ($consult['message'] ?? ''));
         return $this->withDetail($this->result(false, false, false, $doc, $msg), $detail);
+    }
+
+    /**
+     * Persiste la respuesta cruda de una consulta que NO trajo CDR real, para que quede
+     * disponible en pantalla y como base para acceptWithoutCdr() — sin tocar `status`,
+     * `sunat_code` ni ningún otro campo de veredicto (regla 2-4 de la sección 14 del plan).
+     *
+     * @param array<string, mixed> $consult
+     */
+    private function persistConsultDetail(
+        FiscalDocument $doc,
+        string $mode,
+        array $consult,
+        string $verdict,
+        ?string $statusCode,
+        string $statusMessage
+    ): void {
+        $doc->setPseResponseJson(json_encode([
+            'last_consult' => [
+                'via' => $mode,
+                'verdict' => $verdict,
+                'status_code' => $statusCode,
+                'status_message' => $statusMessage,
+                'provider_detail' => $consult['provider_detail'] ?? null,
+                'raw_response' => $consult['raw_response'] ?? null,
+                'consulted_at' => (new \DateTimeImmutable())->format(DATE_ATOM),
+            ],
+        ], JSON_UNESCAPED_UNICODE) ?: null);
+        $this->em->flush();
+    }
+
+    /**
+     * Acción EXPLÍCITA de una persona: marca el documento como aceptado sin CDR real,
+     * basándose en la última consulta persistida por persistConsultDetail(). Nunca se llama
+     * automáticamente desde recover() — solo desde una acción dedicada del dashboard que el
+     * usuario dispara después de leer la respuesta cruda en pantalla (reglas 2-4 de la
+     * sección 14 del plan / diseño 11.2).
+     *
+     * @return array{ok: bool, found: bool, applied: bool, accepted: bool, status: string, sunat_code: ?string, sunat_message: ?string, message: string}
+     */
+    public function acceptWithoutCdr(FiscalDocument $doc): array
+    {
+        $lastConsult = $this->readLastConsult($doc);
+        if ($lastConsult === null) {
+            return array_merge(['ok' => false], $this->result(
+                false,
+                false,
+                false,
+                $doc,
+                'No hay una consulta previa registrada para este documento. Use "Consultar CDR" primero.'
+            ));
+        }
+        if (($lastConsult['verdict'] ?? null) !== SunatValidityClassifier::ACCEPTED) {
+            return array_merge(['ok' => false], $this->result(
+                false,
+                false,
+                false,
+                $doc,
+                'La última consulta registrada no indica un veredicto de aceptación — no se puede marcar como aceptado sin CDR.'
+            ));
+        }
+
+        $result = $this->applyValidWithoutCdr(
+            $doc,
+            $lastConsult['status_code'] ?? null,
+            (string) ($lastConsult['status_message'] ?? '')
+        );
+
+        $this->logger->info('fiscal_accept_without_cdr_manual', [
+            'uuid' => $doc->getDocumentUuid(),
+            'via' => $lastConsult['via'] ?? null,
+        ]);
+
+        return array_merge(['ok' => true], $result);
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function readLastConsult(FiscalDocument $doc): ?array
+    {
+        $raw = $doc->getPseResponseJson();
+        if ($raw === null || $raw === '') {
+            return null;
+        }
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded) || !isset($decoded['last_consult']) || !is_array($decoded['last_consult'])) {
+            return null;
+        }
+
+        return $decoded['last_consult'];
     }
 
     /**
@@ -137,6 +228,15 @@ class FiscalCdrRecoveryService
     private function describeUnresolved(string $verdict, string $statusMessage, string $fallback): string
     {
         switch ($verdict) {
+            case SunatValidityClassifier::ACCEPTED:
+                // Antes esto disparaba applyValidWithoutCdr() automáticamente (el bug de la
+                // sección 2 del plan). Ahora solo informa — la persona decide con
+                // acceptWithoutCdr() si corresponde confirmarlo.
+                return 'SUNAT/PSE indica que el comprobante existe y fue ACEPTADO, pero todavía no se '
+                    . 'recibió un CDR real. No se marca como aceptado automáticamente — revise la '
+                    . 'respuesta cruda y, si corresponde, use "Marcar como aceptado sin CDR" para '
+                    . 'confirmarlo manualmente.'
+                    . ($statusMessage !== '' ? ' Detalle: ' . $statusMessage : '');
             case SunatValidityClassifier::NOT_FOUND:
                 return 'SUNAT indica que el comprobante NO existe (no fue recibido). '
                     . 'Podría requerir reenvío.' . ($statusMessage !== '' ? ' Detalle: ' . $statusMessage : '');
@@ -304,7 +404,7 @@ class FiscalCdrRecoveryService
         // Envelope ValidaPSE: isSuccess (bool), estado (200 ok / 400 error), mensaje | message | errors.
         $isSuccess = filter_var($resp['isSuccess'] ?? false, FILTER_VALIDATE_BOOLEAN);
         $estado = isset($resp['estado']) ? (string) $resp['estado'] : null;
-        $pseMsg = $this->pseMessage($resp);
+        $pseMsg = PseResponseFormatter::message($resp);
         $statusMessage = trim(($estado !== null && $estado !== '' ? $estado . ' ' : '') . $pseMsg);
         $pseDetail = sprintf(
             'PSE · HTTP %d · isSuccess=%s · estado=%s · body: %s',
@@ -352,8 +452,10 @@ class FiscalCdrRecoveryService
             }
         }
 
-        // Sin CDR adjunto: el veredicto lo da el propio PSE.
-        //  - isSuccess=true  → el comprobante existe y es válido en el PSE → ACEPTADO (aunque no adjunte CDR),
+        // Sin CDR adjunto: este veredicto es SOLO informativo (para el mensaje que lee la
+        // persona y para acceptWithoutCdr()) — recover() ya NO lo usa para cambiar `status`
+        // automáticamente (reglas 2-4 de la sección 14 del plan).
+        //  - isSuccess=true  → el PSE dice que el comprobante existe y es válido → ACEPTADO,
         //    salvo que el mensaje diga explícitamente rechazado.
         //  - isSuccess=false → no válido/no encontrado: se clasifica por el mensaje para informar.
         if ($isSuccess) {
@@ -372,14 +474,19 @@ class FiscalCdrRecoveryService
             'status_message' => $statusMessage,
             'verdict' => $verdict,
             'provider_detail' => $pseDetail,
+            'raw_response' => $resp,
             'message' => $pseMsg ?: ('PSE respondió (HTTP ' . $httpCode . ') sin CDR adjunto.'),
         ];
     }
 
     /**
-     * SUNAT/PSE confirma que el comprobante existe y está ACEPTADO, pero no devolvió el CDR.
-     * El comprobante es válido igual → se marca aceptado (sin CDR) y se sincroniza al tenant.
-     * El CDR podrá recuperarse después con otra consulta (has_cdr seguirá en false hasta entonces).
+     * Marca el documento como aceptado SIN un CDR real — decisión humana explícita (nunca
+     * automática, ver acceptWithoutCdr(), único llamador). `sunat_code` NUNCA se fabrica como
+     * '0' (regla 3 de la sección 14 del plan): ese valor solo debe representar un código real
+     * salido de un CDR procesado. Aquí se conserva el `statusCode` real de la consulta (el
+     * `estado` de PSE o el código de `getStatus` de SUNAT) tal cual, para que quede claro que
+     * no es un ResponseCode de CDR — el mensaje deja explícito que fue una decisión manual.
+     * El CDR real, si aparece después, seguirá pudiendo reclasificar el documento normalmente.
      *
      * @return array{found: bool, applied: bool, accepted: bool, status: string, sunat_code: ?string, sunat_message: ?string, message: string}
      */
@@ -390,10 +497,10 @@ class FiscalCdrRecoveryService
         $doc->setErrorType(null);
         $doc->setRetryable(false);
         $doc->setNextRetryAt(null);
-        $doc->setSunatCode('0');
-        $msg = 'Aceptado por SUNAT (validado por consulta de estado; CDR no disponible aún en SUNAT).';
+        $doc->setSunatCode($statusCode); // nunca se fabrica '0' — se deja el código real de la consulta, o null
+        $msg = 'Marcado como ACEPTADO manualmente (decisión humana, sin CDR real de SUNAT disponible).';
         if ($statusMessage !== '') {
-            $msg .= ' Detalle SUNAT: ' . $statusMessage;
+            $msg .= ' Detalle de la última consulta: ' . $statusMessage;
         }
         $doc->setSunatMessage($msg);
         if ($doc->getSentAt() === null) {
@@ -414,9 +521,9 @@ class FiscalCdrRecoveryService
             'applied' => true,
             'accepted' => true,
             'status' => $doc->getStatus(),
-            'sunat_code' => '0',
+            'sunat_code' => $doc->getSunatCode(),
             'sunat_message' => $doc->getSunatMessage(),
-            'message' => 'Comprobante validado como ACEPTADO por SUNAT (sin CDR disponible aún).',
+            'message' => 'Comprobante marcado como ACEPTADO manualmente (sin CDR real disponible).',
         ];
     }
 
@@ -643,19 +750,5 @@ class FiscalCdrRecoveryService
         }
 
         return $base . $path;
-    }
-
-    /**
-     * @param array<string, mixed> $resp
-     */
-    private function pseMessage(array $resp): string
-    {
-        foreach (['mensaje', 'message', 'errors', 'error'] as $key) {
-            if (!empty($resp[$key]) && is_string($resp[$key])) {
-                return trim($resp[$key]);
-            }
-        }
-
-        return '';
     }
 }

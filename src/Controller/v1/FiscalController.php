@@ -380,6 +380,27 @@ class FiscalController extends AbstractController
     }
 
     /**
+     * Acción EXPLÍCITA de una persona: marca el documento como ACEPTADO sin un CDR real,
+     * basándose en la última consulta registrada (ver "Consultar CDR" arriba) — nunca ocurre
+     * automáticamente. Pensada para usarse después de leer la respuesta cruda de esa consulta
+     * en pantalla y decidir que sí corresponde aceptarlo (reglas 2-4 de la sección 14 del plan
+     * / diseño 11.2). Falla si no hay una consulta previa registrada, o si esa consulta no
+     * indicó un veredicto de aceptación.
+     *
+     * @Route("/documents/{uuid}/accept-without-cdr", methods={"POST"})
+     */
+    public function acceptWithoutCdr(string $uuid): JsonResponse
+    {
+        $doc = $this->repo->findOneBy(['documentUuid' => $uuid]);
+        if ($doc === null) {
+            return new JsonResponse(['error' => 'no encontrado'], Response::HTTP_NOT_FOUND);
+        }
+        $result = $this->cdrRecovery->acceptWithoutCdr($doc);
+
+        return new JsonResponse($result, ($result['ok'] ?? false) ? Response::HTTP_OK : Response::HTTP_BAD_REQUEST);
+    }
+
+    /**
      * Decisión manual: SÍ actualizar el estado en la BD del tenant (dispara el webhook al ERP).
      *
      * @Route("/documents/{uuid}/sync-tenant", methods={"POST"})

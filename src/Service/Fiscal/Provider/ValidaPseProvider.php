@@ -9,6 +9,8 @@ use App\Entity\FiscalDocument;
 use App\Service\Fiscal\CdrNormalizer;
 use Greenter\Factory\XmlBuilderResolver;
 use Greenter\Model\DocumentInterface;
+use Greenter\Ws\Reader\DomCdrReader;
+use Greenter\Ws\Reader\XmlReader;
 
 /**
  * PSE vía proveedor configurable (ValidaPSE, NubeFact, etc.).
@@ -184,32 +186,78 @@ class ValidaPseProvider extends AbstractFiscalProvider
                 }
             }
         }
-        if (!empty($pseResp['cdr'])) {
-            $cdr = CdrNormalizer::decodePseCdrField((string) $pseResp['cdr'], $filenameBase);
-            if ($cdr !== null) {
-                $out->cdrZip = $cdr;
+        // El CDR (ApplicationResponse) puede venir en 'cdr' (base64), XML o ZIP SUNAT ya
+        // envuelto. Se decodifica el XML crudo aparte del ZIP de almacenamiento porque hace
+        // falta PARSEARLO (DomCdrReader → CdrResponse) para saber su código real — nunca se
+        // asume "aceptado" solo porque el campo esté presente (reglas 2/3 de la sección 14).
+        $cdrRawXml = null;
+        if (!empty($pseResp['cdr']) && is_string($pseResp['cdr'])) {
+            $decoded = base64_decode((string) $pseResp['cdr'], true);
+            if ($decoded !== false && $decoded !== '' && CdrNormalizer::isXml($decoded)) {
+                $cdrRawXml = $decoded;
+                $out->cdrZip = CdrNormalizer::toSunatZip($decoded, $filenameBase);
             }
         }
 
-        if ($isSuccess && $out->cdrZip !== null) {
-            $out->sunatCode = '0';
-            $out->sunatMessage = $out->pseMessage ?: 'Aceptado vía PSE';
-        } elseif (SunatDuplicateClassifier::isAlreadySubmitted(
-            isset($pseResp['estado']) ? (string) $pseResp['estado'] : null,
-            $out->pseMessage
-        )) {
-            // El comprobante ya fue informado a SUNAT en un intento previo: no reenviar,
+        $embeddedCode = isset($pseResp['code']) ? (string) $pseResp['code'] : null;
+        $estado = isset($pseResp['estado']) ? (string) $pseResp['estado'] : null;
+
+        if ($cdrRawXml !== null) {
+            // CDR real: se parsea y se clasifica exactamente igual que el canal directo
+            // (mismo SunatCdrClassifier, que a su vez usa CdrResponse::isAccepted() de
+            // Greenter) — el código sale del propio CDR, nunca se fabrica. Se evalúa antes
+            // que `isSuccess` porque SUNAT puede devolver, dentro de un CDR real, un
+            // resultado de rechazo aunque el PSE reporte éxito en su propia operación.
+            $cdrResponse = (new DomCdrReader(new XmlReader()))->getCdrResponse($cdrRawXml);
+            $classified = SunatCdrClassifier::fromCdrResponse($cdrResponse);
+            $out->sunatCode = $classified['code'];
+            $out->sunatMessage = $classified['message'] !== null && $classified['message'] !== ''
+                ? $classified['message']
+                : $out->pseMessage;
+            $out->cdrNotes = $classified['notes'];
+            $out->success = $classified['success'];
+            $out->rejected = $classified['rejected'];
+            $out->observed = $classified['observed'];
+            $out->errorType = $classified['errorType'];
+        } elseif ($isSuccess) {
+            // PSE confirma éxito de SU PROPIA operación (isSuccess:true), pero esta
+            // respuesta no trae un CDR real embebido. Esto NO es evidencia de que el
+            // comprobante ya haya sido informado en un intento ANTERIOR (eso solo lo
+            // determina SunatDuplicateClassifier vía 1033/mensaje) ni tampoco evidencia de
+            // aceptación por SUNAT — es este mismo envío, exitoso del lado del PSE, con el
+            // CDR real todavía pendiente. No se reenvía (evitar duplicar el envío) y no se
+            // acepta sin CDR real: queda "enviado, pendiente de CDR" hasta consulta manual.
+            $out->sunatCode = $estado; // nunca se fabrica '0'
+            $out->sunatMessage = $out->pseMessage ?: 'Enviado a PSE, CDR pendiente de consulta';
+            $out->sentPendingCdr = true;
+            // `success` significa "aceptado, verificado por un CDR real clasificado" — el
+            // isSuccess de PSE por sí solo NO califica (regla 4), así que se deja en false
+            // aunque $isSuccess sea true, para que nada aguas abajo pueda interpretarlo como
+            // aceptación (FiscalEmitResult::isAccepted() = success && !rejected && !observed).
+            $out->success = false;
+        } elseif (SunatDuplicateClassifier::isAlreadySubmitted($embeddedCode, $out->pseMessage)) {
+            // El comprobante ya fue informado a SUNAT en un intento PREVIO (código 1033 o
+            // texto equivalente) — evidencia concreta, no una suposición. No reenviar,
             // consultar el CDR en el PSE (GET /api/cpe/consultar/{archivo}).
-            $out->sunatCode = isset($pseResp['estado']) ? (string) $pseResp['estado'] : null;
+            $out->sunatCode = $embeddedCode;
             $out->sunatMessage = $out->pseMessage ?: 'El comprobante fue informado anteriormente';
             $out->rejected = false;
             $out->alreadySubmitted = true;
             $out->errorType = 'transient';
         } else {
-            $estado = $pseResp['estado'] ?? null;
-            $out->sunatCode = $estado !== null ? (string) $estado : 'error';
+            $bucket = FiscalErrorBucketClassifier::classify($embeddedCode, $out->pseMessage);
+            $out->sunatCode = $embeddedCode ?? ($estado ?? 'error');
             $out->sunatMessage = $out->pseMessage ?: 'Rechazado por PSE';
-            $out->rejected = true;
+            if ($bucket === FiscalErrorBucketClassifier::BUCKET_BUSINESS) {
+                $out->rejected = true;
+                $out->errorType = 'business';
+            } elseif ($bucket === FiscalErrorBucketClassifier::BUCKET_TRANSIENT) {
+                $out->rejected = false;
+                $out->errorType = 'transient';
+            } else {
+                $out->rejected = false;
+                $out->errorType = 'manual_only';
+            }
         }
 
         return $out;
@@ -248,14 +296,6 @@ class ValidaPseProvider extends AbstractFiscalProvider
             }
         }
         return '/api/cpe/generarenviar-demo';
-    }
-
-    /**
-     * @param array<string, mixed> $resp
-     */
-    private function bestMessage(array $resp): string
-    {
-        return PseResponseFormatter::message($resp);
     }
 
     /**

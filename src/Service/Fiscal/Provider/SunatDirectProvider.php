@@ -132,12 +132,28 @@ class SunatDirectProvider extends AbstractFiscalProvider
             // No se debe reenviar: se marca para consultar el CDR (consulta de validez).
             if (SunatDuplicateClassifier::isAlreadySubmitted($faultCode, $out->sunatMessage)) {
                 $out->alreadySubmitted = true;
-            } elseif (SunatTerminalFaultClassifier::isTerminal($faultCode, $out->sunatMessage)) {
-                // Rechazo definitivo sin CDR (ej. 1032: comprobante ya informado con estado
-                // anulado/rechazado). El correlativo quedó quemado: no reintentar.
-                $out->sunatCode = $faultCode ?? $out->sunatCode;
-                $out->rejected = true;
-                $out->errorType = 'business';
+            } else {
+                // Mismo clasificador que PSE (13.11.3 del plan) — antes solo se detectaba el
+                // caso puntual 1032 (rechazo definitivo, ver docblock de
+                // FiscalErrorBucketClassifier::BUSINESS_CODES_BELOW_2000) y cualquier otro
+                // fault (ej. 0111 "sin perfil", rechazos de negocio ≥2000 sin CDR) quedaba
+                // 'transient' por defecto — reintentándose indefinidamente sin poder tener
+                // éxito nunca (evidencia real: 91 documentos, 160-203 reintentos, sección
+                // 13.11.1 del plan).
+                $bucket = FiscalErrorBucketClassifier::classify($faultCode, $out->sunatMessage);
+                if ($bucket === FiscalErrorBucketClassifier::BUCKET_BUSINESS) {
+                    // Rechazo definitivo sin CDR: el correlativo quedó quemado o el
+                    // contenido es inválido — no reintentar.
+                    $out->sunatCode = $faultCode ?? $out->sunatCode;
+                    $out->rejected = true;
+                    $out->errorType = 'business';
+                } elseif ($bucket === FiscalErrorBucketClassifier::BUCKET_MANUAL_ONLY) {
+                    // No se resuelve reintentando solo (perfil SOL sin habilitar, código no
+                    // identificado, etc.) — nunca se auto-programa reintento.
+                    $out->sunatCode = $faultCode ?? $out->sunatCode;
+                    $out->errorType = 'manual_only';
+                }
+                // BUCKET_TRANSIENT: no toca nada, $out->errorType ya quedó 'transient' arriba.
             }
         }
 
