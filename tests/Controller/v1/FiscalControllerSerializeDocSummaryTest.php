@@ -189,4 +189,69 @@ class FiscalControllerSerializeDocSummaryTest extends TestCase
             self::assertArrayHasKey($key, $result, "campo preexistente '{$key}' no debe desaparecer");
         }
     }
+
+    // ------------------------------------------------------------------
+    // customer_name ("Cliente" en /fiscal) — la columna nunca se llenaba
+    // porque el código buscaba snapshot['customer']['razonSocial'], pero el
+    // snapshot real (construido por backend_go, InvoiceClient) usa
+    // snapshot['client']['rznSocial']. Confirmado contra un documento real
+    // de producción y contra pkg/facturador/client.go:345-350.
+    // ------------------------------------------------------------------
+
+    private function documentWithSnapshot(array $snapshot): FiscalDocument
+    {
+        return (new FiscalDocument())
+            ->setDocumentUuid('uuid-client-1')
+            ->setTenantId(1)
+            ->setTenantSlug('tenant-test')
+            ->setSaleId(100)
+            ->setDocumentType('03')
+            ->setSeries('B001')
+            ->setNumber('00001')
+            ->setStatus(FiscalDocument::STATUS_ACCEPTED)
+            ->setSnapshotJson(json_encode($snapshot, JSON_UNESCAPED_UNICODE) ?: '{}');
+    }
+
+    public function testCustomerNameExtractedFromRealClientSnapshotKey(): void
+    {
+        $doc = $this->documentWithSnapshot([
+            'client' => ['tipoDoc' => '1', 'numDoc' => '99999999999', 'rznSocial' => 'Clientes Varios'],
+            'company' => ['ruc' => '20000000001', 'razonSocial' => 'EMPRESA DEMO'],
+        ]);
+
+        $result = $this->serialize($doc);
+
+        self::assertSame('Clientes Varios', $result['customer_name']);
+    }
+
+    public function testCustomerNameNullWhenNoClientKeyPresent(): void
+    {
+        $doc = $this->documentWithSnapshot(['company' => ['ruc' => '20000000001']]);
+
+        $result = $this->serialize($doc);
+
+        self::assertNull($result['customer_name']);
+    }
+
+    /** El fallback defensivo a 'customer' (clave vieja, nunca confirmada en producción) sigue funcionando si 'client' está ausente. */
+    public function testCustomerNameFallsBackToLegacyCustomerKeyIfClientMissing(): void
+    {
+        $doc = $this->documentWithSnapshot(['customer' => ['razonSocial' => 'Cliente Legado SAC']]);
+
+        $result = $this->serialize($doc);
+
+        self::assertSame('Cliente Legado SAC', $result['customer_name']);
+    }
+
+    public function testCustomerNamePrefersClientOverLegacyCustomerWhenBothPresent(): void
+    {
+        $doc = $this->documentWithSnapshot([
+            'client' => ['rznSocial' => 'Nombre Correcto'],
+            'customer' => ['razonSocial' => 'Nombre Legado Ignorado'],
+        ]);
+
+        $result = $this->serialize($doc);
+
+        self::assertSame('Nombre Correcto', $result['customer_name']);
+    }
 }

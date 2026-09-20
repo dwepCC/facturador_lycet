@@ -178,7 +178,7 @@ class FiscalDocumentRepository extends ServiceEntityRepository
      * @param string[] $statuses
      * @return FiscalDocument[]
      */
-    public function findByStatuses(array $statuses, int $limit = 50): array
+    public function findByStatuses(array $statuses, int $limit = 50, int $offset = 0): array
     {
         if ($statuses === []) {
             return [];
@@ -190,6 +190,7 @@ class FiscalDocumentRepository extends ServiceEntityRepository
             ->setParameter('nonFiscal', self::NON_FISCAL_TYPES)
             ->orderBy('d.updatedAt', 'DESC')
             ->setMaxResults($limit)
+            ->setFirstResult(max(0, $offset))
             ->getQuery()
             ->getResult();
     }

@@ -762,7 +762,19 @@ class FiscalController extends AbstractController
         $companyName = null;
         $total = null;
         if (is_array($snapshot)) {
-            if (isset($snapshot['customer']) && is_array($snapshot['customer'])) {
+            // El comprador va bajo la clave 'client' (InvoiceClient de backend_go, campo
+            // 'rznSocial') — 'customer'/'razonSocial' nunca existieron en el snapshot real,
+            // por eso esta columna nunca se llenaba en /documents. Se mantienen 'customer'/
+            // variantes como fallback defensivo por si algún documento legado usara otra
+            // forma, pero 'client'/'rznSocial' es la fuente real y va primero.
+            if (isset($snapshot['client']) && is_array($snapshot['client'])) {
+                $customerName = $snapshot['client']['rznSocial']
+                    ?? $snapshot['client']['razonSocial']
+                    ?? $snapshot['client']['nombre']
+                    ?? $snapshot['client']['name']
+                    ?? null;
+            }
+            if (($customerName === null || $customerName === '') && isset($snapshot['customer']) && is_array($snapshot['customer'])) {
                 $customerName = $snapshot['customer']['razonSocial']
                     ?? $snapshot['customer']['nombre']
                     ?? $snapshot['customer']['name']

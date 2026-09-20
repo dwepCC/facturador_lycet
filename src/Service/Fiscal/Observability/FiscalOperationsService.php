@@ -89,11 +89,18 @@ class FiscalOperationsService
         ];
     }
 
+    private const GROUP_STATUSES = [
+        'queued' => [FiscalDocument::STATUS_QUEUED, FiscalDocument::STATUS_PENDING],
+        'processing' => [FiscalDocument::STATUS_SENDING],
+        'failed' => [FiscalDocument::STATUS_ERROR, FiscalDocument::STATUS_REJECTED],
+        'retrying' => [FiscalDocument::STATUS_RETRYING],
+    ];
+
     /**
      * @param array<string, mixed> $filters
      * @return array<string, mixed>
      */
-    public function tenantsTable(array $filters = []): array
+    public function tenantsTable(array $filters = [], int $limit = 25, int $offset = 0): array
     {
         $auditRows = $this->auditLogs->tenantOperationsSummary(24);
         $auditBySlug = [];
@@ -166,38 +173,57 @@ class FiscalOperationsService
             }));
         }
 
-        return ['items' => $items, 'total' => count($items)];
+        $total = count($items);
+        $limit = max(1, $limit);
+        $offset = max(0, $offset);
+        $page = array_slice($items, $offset, $limit);
+
+        return ['items' => $page, 'total' => $total, 'limit' => $limit, 'offset' => $offset];
     }
 
     /**
+     * Monitor de cola paginado por bucket (Fase 8 del Panel Central Fiscal — antes traía SIEMPRE
+     * los 4 buckets a la vez, tope fijo de 50 cada uno, sin forma de ver más allá de esos 50 ni
+     * de paginar. Ahora se pide UN bucket a la vez (con su offset/limit reales) + los 4 contadores
+     * livianos para las pestañas — mismo dato, menos trabajo por request: antes eran 8 queries
+     * (4 find + 4 count) siempre; ahora 1 find + 4 count).
+     *
      * @return array<string, mixed>
      */
-    public function queueMonitor(): array
+    public function queueMonitor(string $group = 'queued', int $limit = 25, int $offset = 0): array
     {
-        $groups = [
-            'queued' => [FiscalDocument::STATUS_QUEUED, FiscalDocument::STATUS_PENDING],
-            'processing' => [FiscalDocument::STATUS_SENDING],
-            'failed' => [FiscalDocument::STATUS_ERROR, FiscalDocument::STATUS_REJECTED],
-            'retrying' => [FiscalDocument::STATUS_RETRYING],
-        ];
+        if (!isset(self::GROUP_STATUSES[$group])) {
+            $group = 'queued';
+        }
+        $statuses = self::GROUP_STATUSES[$group];
+        $limit = max(1, min(100, $limit));
+        $offset = max(0, $offset);
 
-        $result = [];
-        foreach ($groups as $key => $statuses) {
-            $docs = $this->documents->findByStatuses($statuses, 50);
-            $result[$key] = array_map([$this, 'serializeQueueItem'], $docs);
-            $result[$key . '_count'] = $this->documents->countByStatuses($statuses);
+        $docs = $this->documents->findByStatuses($statuses, $limit, $offset);
+        $items = array_map([$this, 'serializeQueueItem'], $docs);
+        $total = $this->documents->countByStatuses($statuses);
+
+        $counts = [];
+        foreach (self::GROUP_STATUSES as $key => $groupStatuses) {
+            $counts[$key] = $key === $group ? $total : $this->documents->countByStatuses($groupStatuses);
         }
 
-        $result['redis'] = [
-            'emit_queue' => $this->queue->isReachable() ? $this->queue->queueLength(FiscalQueueService::QUEUE_EMIT) : 0,
-            'retry_scheduled' => $this->queue->isReachable()
-                ? $this->queue->scheduledRetryCount(FiscalQueueService::QUEUE_RETRY)
-                    + $this->queue->scheduledRetryCount(FiscalQueueService::QUEUE_PSE_RETRY)
-                : 0,
-            'redis_connected' => $this->queue->isReachable(),
+        return [
+            'group' => $group,
+            'items' => $items,
+            'total' => $total,
+            'limit' => $limit,
+            'offset' => $offset,
+            'counts' => $counts,
+            'redis' => [
+                'emit_queue' => $this->queue->isReachable() ? $this->queue->queueLength(FiscalQueueService::QUEUE_EMIT) : 0,
+                'retry_scheduled' => $this->queue->isReachable()
+                    ? $this->queue->scheduledRetryCount(FiscalQueueService::QUEUE_RETRY)
+                        + $this->queue->scheduledRetryCount(FiscalQueueService::QUEUE_PSE_RETRY)
+                    : 0,
+                'redis_connected' => $this->queue->isReachable(),
+            ],
         ];
-
-        return $result;
     }
 
     /**

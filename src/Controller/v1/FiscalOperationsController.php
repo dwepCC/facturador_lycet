@@ -59,6 +59,9 @@ class FiscalOperationsController extends AbstractController
      */
     public function tenants(Request $request): JsonResponse
     {
+        $limit = (int) $request->query->get('limit', 25);
+        $offset = (int) $request->query->get('offset', 0);
+
         return new JsonResponse($this->operations->tenantsTable([
             'tenant_slug' => $this->q($request, 'tenant_slug'),
             'provider' => $this->q($request, 'provider'),
@@ -67,15 +70,19 @@ class FiscalOperationsController extends AbstractController
             'errors_only' => filter_var($request->query->get('errors_only', false), FILTER_VALIDATE_BOOLEAN),
             'pending_only' => filter_var($request->query->get('pending_only', false), FILTER_VALIDATE_BOOLEAN),
             'q' => $this->q($request, 'q'),
-        ]));
+        ], min(100, max(1, $limit)), max(0, $offset)));
     }
 
     /**
      * @Route("/operations/queue", methods={"GET"})
      */
-    public function queue(): JsonResponse
+    public function queue(Request $request): JsonResponse
     {
-        return new JsonResponse($this->operations->queueMonitor());
+        $group = $this->q($request, 'group') ?? 'queued';
+        $limit = (int) $request->query->get('limit', 25);
+        $offset = (int) $request->query->get('offset', 0);
+
+        return new JsonResponse($this->operations->queueMonitor($group, min(100, max(1, $limit)), max(0, $offset)));
     }
 
     /**
