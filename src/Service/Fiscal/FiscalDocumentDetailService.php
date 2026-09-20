@@ -89,7 +89,8 @@ class FiscalDocumentDetailService
         ?string $tenantSlug = null,
         ?\DateTimeInterface $from = null,
         ?\DateTimeInterface $to = null,
-        ?int $tenantId = null
+        ?int $tenantId = null,
+        bool $includeTenants = true
     ): array {
         $counts = $this->documents->countByStatus($tenantSlug, $from, $to);
         $total = array_sum($counts);
@@ -124,7 +125,15 @@ class FiscalDocumentDetailService
             'retries' => $counts['retrying'] ?? 0,
             'emails_pending' => $this->emails->countPending($tenantSlug),
             'by_status' => $counts,
-            'tenants' => $this->documents->countByTenant($tenantSlug),
+            // Fase 5 (performance): FiscalOperationsService::summary() llama a globalStats()
+            // solo por 'documents_today'/'pending' y descartaba 'tenants' sin usarlo — un
+            // GROUP BY sin rango de fecha sobre toda fiscal_documents (~125ms medidos con
+            // 38k filas, con ORDER BY+LIMIT+filesort) ejecutado en cada poll de 30s para nada.
+            // $includeTenants=false evita ese cálculo cuando el caller no lo necesita; el
+            // caller que SÍ expone 'tenants' en su contrato (FiscalController::stats(), ver
+            // FiscalStats.tenants en frontend_central) sigue usando el default true, sin
+            // ningún cambio de comportamiento.
+            'tenants' => $includeTenants ? $this->documents->countByTenant($tenantSlug) : [],
         ];
     }
 

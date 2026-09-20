@@ -111,23 +111,7 @@ class FiscalBulkActionService
             return in_array($doc->getStatus(), [FiscalDocument::STATUS_ACCEPTED, FiscalDocument::STATUS_OBSERVED], true)
                 && $doc->getCdrUrl() !== null && $doc->getCdrUrl() !== '';
         }
-        if ($doc->getStatus() === FiscalDocument::STATUS_ACCEPTED && in_array($action, ['send', 'retry'], true)) {
-            return true;
-        }
-        // No desperdiciar una acción masiva de reenvío en documentos que no se van a
-        // resolver solo reintentando (rechazo real de negocio, requiere revisión manual, o
-        // config/certificado) — el error_type ya lo dice. 'transient' SÍ se deja pasar
-        // aunque esté agotado (retryable=false): reintentar manualmente después de una
-        // caída pasajera de SUNAT/PSE es exactamente el caso de uso de este botón. 'force'
-        // sigue sin ningún filtro, como override explícito (sección 14.1.1 del plan).
-        if (in_array($action, ['send', 'retry'], true)
-            && $doc->getStatus() === FiscalDocument::STATUS_ERROR
-            && in_array($doc->getErrorType(), [
-                FiscalDocument::ERROR_BUSINESS,
-                FiscalDocument::ERROR_PERMANENT,
-                'manual_only',
-            ], true)
-        ) {
+        if (in_array($action, ['send', 'retry'], true) && $this->isBlockedForNormalAction($doc)) {
             return true;
         }
         if ($action === 'email' && !$this->emailNormalizer->isDeliverable($this->emailNormalizer->resolveFromDocument($doc))) {
@@ -135,6 +119,34 @@ class FiscalBulkActionService
         }
 
         return false;
+    }
+
+    /**
+     * Fuente única de verdad para "¿este documento admite un send/retry NORMAL (no force)?"
+     * Reutilizada tanto por acciones masivas (shouldSkip) como por acciones individuales
+     * (FiscalController::enqueueAction) — evita mantener la regla dos veces.
+     *
+     * Deliberadamente basada en `error_type`, NO en `status`: un bucket terminal
+     * (business/permanent/manual_only) debe seguir bloqueado sin importar en qué `status`
+     * haya quedado el documento — antes, el guard sólo miraba `status=ERROR`, y un
+     * `business` (que siempre queda en `status=REJECTED`, ver FiscalEmitProcessor y
+     * FiscalReclassifyHistoricalCommand) se colaba sin protección. 'transient' NO bloquea
+     * aquí aunque esté agotado (retryable=false): el reintento MANUAL explícito de un
+     * transitorio agotado sigue siendo un caso de uso válido (decisión aprobada — distingue
+     * "ningún camino automático" de "una persona lo pide explícitamente"); lo único que la
+     * regla de 5 intentos impide es que vuelva a entrar solo, por cron/requeue.
+     */
+    public function isBlockedForNormalAction(FiscalDocument $doc): bool
+    {
+        if ($doc->getStatus() === FiscalDocument::STATUS_ACCEPTED) {
+            return true;
+        }
+
+        return in_array($doc->getErrorType(), [
+            FiscalDocument::ERROR_BUSINESS,
+            FiscalDocument::ERROR_PERMANENT,
+            'manual_only',
+        ], true);
     }
 
     private function payloadFor(FiscalDocument $doc, string $action): array

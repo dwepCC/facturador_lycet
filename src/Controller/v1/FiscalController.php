@@ -299,7 +299,7 @@ class FiscalController extends AbstractController
      */
     public function sendManual(string $uuid): JsonResponse
     {
-        return $this->enqueueAction($uuid, FiscalQueueService::QUEUE_EMIT, 'queued');
+        return $this->enqueueAction($uuid, FiscalQueueService::QUEUE_EMIT, 'queued', true);
     }
 
     /**
@@ -307,7 +307,7 @@ class FiscalController extends AbstractController
      */
     public function retry(string $uuid): JsonResponse
     {
-        return $this->enqueueAction($uuid, FiscalQueueService::QUEUE_EMIT, 'retry_queued');
+        return $this->enqueueAction($uuid, FiscalQueueService::QUEUE_EMIT, 'retry_queued', true);
     }
 
     /**
@@ -534,11 +534,28 @@ class FiscalController extends AbstractController
         return $response;
     }
 
-    private function enqueueAction(string $uuid, string $queue, string $status): JsonResponse
+    /**
+     * @param bool $enforceGuard true solo para send/retry NORMALES (no force): rechaza con
+     *     409 si el documento está `accepted` o en un bucket terminal para reintento normal
+     *     (business/permanent/manual_only) — ver FiscalBulkActionService::isBlockedForNormalAction(),
+     *     misma regla que usa la acción masiva, sin duplicarla. `force` (y poll/email/consult)
+     *     nunca pasan $enforceGuard=true: siguen siendo el override administrativo explícito.
+     */
+    private function enqueueAction(string $uuid, string $queue, string $status, bool $enforceGuard = false): JsonResponse
     {
         $doc = $this->repo->findOneBy(['documentUuid' => $uuid]);
         if ($doc === null) {
             return new JsonResponse(['error' => 'no encontrado'], Response::HTTP_NOT_FOUND);
+        }
+
+        if ($enforceGuard && $this->bulkService->isBlockedForNormalAction($doc)) {
+            return new JsonResponse([
+                'error' => 'Este documento no admite reenvío/reintento normal en su estado actual',
+                'status' => $doc->getStatus(),
+                'error_type' => $doc->getErrorType(),
+                'retryable' => $doc->isRetryable(),
+                'hint' => 'Usar la acción "force" para forzar el reenvío de todas formas (override administrativo).',
+            ], Response::HTTP_CONFLICT);
         }
 
         try {
@@ -794,6 +811,16 @@ class FiscalController extends AbstractController
             'customer_email' => $doc->getCustomerEmail(),
             'email_status' => $doc->getEmailStatus(),
             'retry_count' => $doc->getRetryCount(),
+            // Corrección de contrato (H3, Fase 2 del plan de alineación del Panel Central):
+            // el listado nunca mandaba estos 3 campos aunque el detalle (FiscalDocumentDetailService::
+            // serializeDocument) y la cola de operaciones (FiscalOperationsService::serializeQueueItem)
+            // ya los envían — frontend_central los tenía tipados esperando recibirlos. Valores directos
+            // de FiscalDocument, sin reclasificar por texto/status: la fuente de verdad sigue siendo
+            // FiscalErrorBucketClassifier/FiscalEmitProcessor, este serializador solo expone lo que ya
+            // está guardado.
+            'error_type' => $doc->getErrorType(),
+            'retryable' => $doc->isRetryable(),
+            'next_retry_at' => $doc->getNextRetryAt() ? $doc->getNextRetryAt()->format(DATE_ATOM) : null,
             'created_at' => $doc->getCreatedAt()->format(DATE_ATOM),
             'accepted_at' => $doc->getAcceptedAt() ? $doc->getAcceptedAt()->format(DATE_ATOM) : null,
         ];

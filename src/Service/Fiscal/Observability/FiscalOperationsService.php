@@ -53,7 +53,10 @@ class FiscalOperationsService
         $this->alertService->runDetection();
 
         $today = new \DateTimeImmutable('today midnight');
-        $stats = $this->detailService->globalStats(null, $today, null);
+        // Fase 5: solo se leen 'documents_today'/'pending' de este resultado — includeTenants
+        // false evita calcular y descartar countByTenant() en cada poll de 30s (ver
+        // FiscalDocumentDetailService::globalStats()).
+        $stats = $this->detailService->globalStats(null, $today, null, null, false);
         $auditToday = $this->auditLogs->globalSummarySince($today);
 
         $errorsToday = (int) ($auditToday['failures'] ?? 0);
