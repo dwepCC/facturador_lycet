@@ -508,6 +508,15 @@ class FiscalEmitProcessor
         $this->recordAttempt($doc, $attemptNum, $providerName, FiscalDocument::STATUS_SENT, $result, null, $started);
         $this->em->flush();
         $this->notifyOrEnqueueSync($doc);
+
+        // Solo para guías (GRE 09/31): la API REST de SUNAT nunca devuelve el CDR en el envío
+        // (a diferencia de factura/boleta), así que programamos la primera reconsulta automática
+        // acotada (ver FiscalCdrConsultProcessor::maybeScheduleAutoRetry). Para el resto de
+        // documentos que caigan en este mismo caso vía PSE, se deja el comportamiento manual del
+        // 19-sep tal cual — nada se toca.
+        if (GreEmitRouting::isGreDocument($doc)) {
+            $this->queue->scheduleCdrConsultRetry($doc->getDocumentUuid(), 1, 30);
+        }
     }
 
     /**

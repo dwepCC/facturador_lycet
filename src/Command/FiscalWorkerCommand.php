@@ -12,6 +12,7 @@ use App\Service\Fiscal\FiscalQueueService;
 use App\Service\Fiscal\FiscalStatusPollProcessor;
 use App\Service\Fiscal\FiscalWebhookSyncProcessor;
 use App\Service\Fiscal\Observability\FiscalAuditService;
+use App\Repository\FiscalDocumentRepository;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -32,6 +33,7 @@ class FiscalWorkerCommand extends Command
     private FiscalCdrConsultProcessor $cdrConsultProcessor;
     private FiscalAuditService $audit;
     private FiscalOrphanRepairService $orphanRepair;
+    private FiscalDocumentRepository $documentRepo;
     private ?int $lastOrphanRepairAt = null;
 
     /** Segundos entre barridos de huérfanos cuando la cola emit está vacía. */
@@ -48,7 +50,8 @@ class FiscalWorkerCommand extends Command
         FiscalStatusPollProcessor $statusPollProcessor,
         FiscalCdrConsultProcessor $cdrConsultProcessor,
         FiscalAuditService $audit,
-        FiscalOrphanRepairService $orphanRepair
+        FiscalOrphanRepairService $orphanRepair,
+        FiscalDocumentRepository $documentRepo
     ) {
         parent::__construct();
         $this->queue = $queue;
@@ -59,6 +62,7 @@ class FiscalWorkerCommand extends Command
         $this->cdrConsultProcessor = $cdrConsultProcessor;
         $this->audit = $audit;
         $this->orphanRepair = $orphanRepair;
+        $this->documentRepo = $documentRepo;
     }
 
     protected function configure(): void
@@ -155,7 +159,12 @@ class FiscalWorkerCommand extends Command
                     break;
                 case FiscalQueueService::QUEUE_CDR_CONSULT:
                     $output->writeln('<info>CDR consult ' . $uuid . '</info>');
-                    $this->cdrConsultProcessor->processByUuid($uuid, (int) ($job['attempt'] ?? 1));
+                    $this->cdrConsultProcessor->processByUuid(
+                        $uuid,
+                        (int) ($job['attempt'] ?? 1),
+                        null,
+                        (bool) ($job['auto'] ?? false)
+                    );
                     break;
             }
         } catch (\Throwable $e) {
@@ -181,19 +190,35 @@ class FiscalWorkerCommand extends Command
             ]);
         }
         foreach ($this->queue->dueRetries(FiscalQueueService::QUEUE_STATUS_POLL) as $uuid) {
-            $output->writeln('<comment>Retry status poll: ' . $uuid . '</comment>');
+            $attempt = $this->nextRetryAttempt($uuid);
+            $output->writeln('<comment>Retry status poll: ' . $uuid . ' (intento ' . $attempt . ')</comment>');
             $this->queue->push(FiscalQueueService::QUEUE_STATUS_POLL, [
                 'document_uuid' => $uuid,
-                'attempt' => 1,
+                'attempt' => $attempt,
             ]);
         }
-        foreach ($this->queue->dueRetries(FiscalQueueService::QUEUE_CDR_CONSULT) as $uuid) {
-            $output->writeln('<comment>Retry CDR consult: ' . $uuid . '</comment>');
+        foreach ($this->queue->dueCdrConsultRetries() as $item) {
+            $output->writeln('<comment>Retry CDR consult: ' . $item['uuid'] . ' (intento ' . $item['attempt'] . ')</comment>');
             $this->queue->push(FiscalQueueService::QUEUE_CDR_CONSULT, [
-                'document_uuid' => $uuid,
-                'attempt' => 1,
+                'document_uuid' => $item['uuid'],
+                'attempt' => $item['attempt'],
+                // Marca que este job viene del ciclo automático (no de un clic manual ni de una
+                // acción bulk) — solo así FiscalCdrConsultProcessor se permite reprogramarse solo.
+                'auto' => true,
             ]);
         }
+    }
+
+    /**
+     * `retryCount` en BD refleja los intentos ya consumidos (FiscalStatusPollProcessor lo
+     * incrementa antes de reprogramar) — antes esta función siempre reencolaba con
+     * `attempt: 1`, lo que anulaba el tope de 10 intentos de scheduleRetry().
+     */
+    private function nextRetryAttempt(string $uuid): int
+    {
+        $doc = $this->documentRepo->findOneBy(['documentUuid' => $uuid]);
+
+        return $doc !== null ? $doc->getRetryCount() + 1 : 1;
     }
 
     /**

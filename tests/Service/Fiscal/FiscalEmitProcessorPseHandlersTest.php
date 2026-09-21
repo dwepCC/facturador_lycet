@@ -28,7 +28,7 @@ use ReflectionMethod;
  */
 class FiscalEmitProcessorPseHandlersTest extends TestCase
 {
-    private function makeProcessor(): FiscalEmitProcessor
+    private function makeProcessor(?FiscalQueueService $queue = null): FiscalEmitProcessor
     {
         return new FiscalEmitProcessor(
             $this->createMock(EntityManagerInterface::class),
@@ -37,7 +37,7 @@ class FiscalEmitProcessorPseHandlersTest extends TestCase
             $this->createMock(SerializerInterface::class),
             $this->createMock(FiscalStorageService::class),
             $this->createMock(FiscalWebhookService::class),
-            $this->createMock(FiscalQueueService::class),
+            $queue ?? $this->createMock(FiscalQueueService::class),
             $this->createMock(FiscalProviderResolver::class),
             $this->createMock(FiscalPdfService::class),
             $this->createMock(LoggerInterface::class)
@@ -56,13 +56,18 @@ class FiscalEmitProcessorPseHandlersTest extends TestCase
         $doc = new FiscalDocument();
         $doc->setDocumentUuid('11111111-1111-1111-1111-111111111111');
         $doc->setTenantSlug('demo');
+        $doc->setDocumentType('01'); // factura — NO es GRE, no debe agendar reconsulta automática
+        $doc->setSnapshotJson('{}');
 
         $result = new FiscalEmitResult();
         $result->sunatCode = '200';
         $result->sunatMessage = 'Enviado a PSE, CDR pendiente de consulta';
         $result->sentPendingCdr = true;
 
-        $this->invokePrivate($this->makeProcessor(), 'handleSentPendingCdr', [$doc, $result, 'validapse', 1, microtime(true)]);
+        $queue = $this->createMock(FiscalQueueService::class);
+        $queue->expects($this->never())->method('scheduleCdrConsultRetry');
+
+        $this->invokePrivate($this->makeProcessor($queue), 'handleSentPendingCdr', [$doc, $result, 'validapse', 1, microtime(true)]);
 
         self::assertSame(FiscalDocument::STATUS_SENT, $doc->getStatus());
         self::assertNotSame(FiscalDocument::STATUS_ACCEPTED, $doc->getStatus());
@@ -71,6 +76,35 @@ class FiscalEmitProcessorPseHandlersTest extends TestCase
         self::assertNull($doc->getNextRetryAt());
         self::assertNotSame('0', $doc->getSunatCode(), 'nunca se fabrica sunat_code=0');
         self::assertSame('200', $doc->getSunatCode());
+    }
+
+    /**
+     * Solo las guías (GRE 09/31) agendan reconsulta automática de CDR — la API REST de SUNAT
+     * nunca devuelve el CDR en el envío, a diferencia de factura/boleta (ver
+     * PLAN-MEJORAS-VALIDACION-Y-REINTENTOS.md, sección 11.5, y la conversación que decidió
+     * completar ese "future work" solo para GRE, sin tocar el resto de tipos de documento).
+     */
+    public function testHandleSentPendingCdrSchedulesAutoConsultOnlyForGre(): void
+    {
+        $doc = new FiscalDocument();
+        $doc->setDocumentUuid('44444444-4444-4444-4444-444444444444');
+        $doc->setTenantSlug('demo');
+        $doc->setDocumentType('09'); // GRE remitente
+        $doc->setSnapshotJson('{}');
+
+        $result = new FiscalEmitResult();
+        $result->sunatCode = '200';
+        $result->sunatMessage = 'Enviado a PSE, CDR pendiente de consulta';
+        $result->sentPendingCdr = true;
+
+        $queue = $this->createMock(FiscalQueueService::class);
+        $queue->expects($this->once())
+            ->method('scheduleCdrConsultRetry')
+            ->with('44444444-4444-4444-4444-444444444444', 1, 30);
+
+        $this->invokePrivate($this->makeProcessor($queue), 'handleSentPendingCdr', [$doc, $result, 'validapse', 1, microtime(true)]);
+
+        self::assertSame(FiscalDocument::STATUS_SENT, $doc->getStatus());
     }
 
     public function testHandleManualOnlyResultNeverAutoRetries(): void

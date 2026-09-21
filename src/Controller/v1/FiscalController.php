@@ -331,6 +331,21 @@ class FiscalController extends AbstractController
      */
     public function pollTicket(string $uuid): JsonResponse
     {
+        $doc = $this->repo->findOneBy(['documentUuid' => $uuid]);
+        if ($doc === null) {
+            return new JsonResponse(['error' => 'no encontrado'], Response::HTTP_NOT_FOUND);
+        }
+        // FiscalStatusPollProcessor exige un ticket SUNAT real (getTicket() no vacío) para hacer
+        // algo — si el documento no lo tiene (ej. guías vía PSE con isSuccess sin CDR embebido,
+        // ver FiscalEmitProcessor::handleSentPendingCdr()), este job siempre fue un no-op
+        // silencioso: se encolaba, corría, y no pasaba nada, sin avisarle a nadie. Se corta acá
+        // con un mensaje claro en vez de dejarlo fallar en silencio.
+        if ($doc->getTicket() === null || $doc->getTicket() === '') {
+            return new JsonResponse([
+                'error' => 'Este documento no tiene un ticket SUNAT registrado — "Consultar ticket" no hace nada en este caso. Use "Consultar CDR" en su lugar.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
         return $this->enqueueAction($uuid, FiscalQueueService::QUEUE_STATUS_POLL, 'poll_queued');
     }
 

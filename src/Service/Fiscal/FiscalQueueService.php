@@ -226,4 +226,46 @@ class FiscalQueueService
     {
         return $this->safeRead(0, fn () => (int) $this->client->zcard($this->scheduledQueueKey($queue)));
     }
+
+    /**
+     * Reintento programado de fiscal:cdr_consult, con el número de intento codificado en el
+     * miembro del ZSET (`uuid::attempt`) — esta cola no usa `retryCount` de FiscalDocument
+     * (ese campo ya lo comparten envío y status_poll; mezclarlo aquí daría topes incorrectos).
+     */
+    public function scheduleCdrConsultRetry(string $documentUuid, int $attempt, int $delaySeconds): void
+    {
+        if ($this->client === null) {
+            return;
+        }
+        $score = time() + $delaySeconds;
+        $member = $documentUuid . '::' . $attempt;
+        $this->client->zadd($this->scheduledQueueKey(self::QUEUE_CDR_CONSULT), [$member => $score]);
+    }
+
+    /**
+     * @return array<array{uuid: string, attempt: int}>
+     */
+    public function dueCdrConsultRetries(int $limit = 20): array
+    {
+        if ($this->client === null) {
+            return [];
+        }
+        $scheduledKey = $this->scheduledQueueKey(self::QUEUE_CDR_CONSULT);
+        $now = time();
+        $items = $this->client->zrangebyscore($scheduledKey, '-inf', (string) $now, ['LIMIT' => [0, $limit]]);
+        if (!is_array($items)) {
+            return [];
+        }
+        $result = [];
+        foreach ($items as $member) {
+            $this->client->zrem($scheduledKey, [$member]);
+            $parts = explode('::', (string) $member, 2);
+            $result[] = [
+                'uuid' => $parts[0],
+                'attempt' => isset($parts[1]) ? max(1, (int) $parts[1]) : 1,
+            ];
+        }
+
+        return $result;
+    }
 }

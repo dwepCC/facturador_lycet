@@ -420,7 +420,12 @@ class FiscalControllerEnqueueActionTest extends TestCase
      */
     public function testPollAndEmailStillWorkOnAcceptedAndBusinessDocuments(): void
     {
+        // pollTicket() ahora exige un ticket SUNAT real (ver guard agregado: sin ticket, /poll
+        // era un no-op silencioso — FiscalStatusPollProcessor se sale sin hacer nada ni avisar).
+        // Con ticket presente, accepted/business siguen sin bloquear poll — la regla de esta
+        // prueba (Fase 4) sigue vigente, solo se agregó la precondición del ticket.
         $acceptedForPoll = $this->makeDocument('uuid-poll-accepted', FiscalDocument::STATUS_ACCEPTED);
+        $acceptedForPoll->setTicket('ticket-123');
         [$pollController] = $this->buildController($acceptedForPoll, true, null, true, FiscalQueueService::QUEUE_STATUS_POLL);
         $pollResult = $this->decode($pollController->pollTicket('uuid-poll-accepted'));
         $this->assertSame(Response::HTTP_ACCEPTED, $pollResult['status']);
@@ -429,6 +434,22 @@ class FiscalControllerEnqueueActionTest extends TestCase
         [$emailController] = $this->buildController($businessForEmail, true, null, true, FiscalQueueService::QUEUE_EMAIL);
         $emailResult = $this->decode($emailController->resendEmail('uuid-email-business'));
         $this->assertSame(Response::HTTP_ACCEPTED, $emailResult['status']);
+    }
+
+    /**
+     * Guard nuevo (dashboard: "Consultar ticket" no hacía nada en silencio para documentos sin
+     * ticket real — ej. guías vía PSE con `sentPendingCdr`, ticket=null a propósito). Ahora
+     * pollTicket() corta antes de encolar y explica qué botón usar en su lugar.
+     */
+    public function testPollWithoutTicketIsRejectedWithHelpfulMessage(): void
+    {
+        $doc = $this->makeDocument('uuid-poll-no-ticket', FiscalDocument::STATUS_SENT);
+        [$controller] = $this->buildController($doc, true, null, false);
+
+        $result = $this->decode($controller->pollTicket('uuid-poll-no-ticket'));
+
+        $this->assertSame(Response::HTTP_UNPROCESSABLE_ENTITY, $result['status']);
+        $this->assertStringContainsString('Consultar CDR', $result['body']['error']);
     }
 
     /** Test J: transient, retryable=true, retry_count<5, retry individual → ENCOLAR. */
