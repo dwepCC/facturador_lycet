@@ -103,6 +103,12 @@ class FiscalBulkActionService
 
     private function shouldSkip(FiscalDocument $doc, string $action): bool
     {
+        // "Atendido" bloquea TODO, incluido force — mismo criterio que
+        // FiscalController::enqueueAction, primero y antes que cualquier otra regla: es una
+        // decisión humana explícita, no un estado técnico que force pueda saltarse.
+        if ($doc->isAttended()) {
+            return true;
+        }
         if ($action === 'force') {
             return false;
         }

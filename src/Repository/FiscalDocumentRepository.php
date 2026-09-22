@@ -147,6 +147,32 @@ class FiscalDocumentRepository extends ServiceEntityRepository
     }
 
     /**
+     * Documentos en un status que requiere decisión (error/rejected/observed/cancelled — los
+     * mismos que admiten marcarse "atendido", ver FiscalController::ATTENDABLE_STATUSES) que
+     * TODAVÍA no fueron atendidos. KPI separado a propósito de countByStatus(): ese cuenta por
+     * status técnico sin importar si ya se revisó; este es "lo que de verdad falta mirar".
+     */
+    public function countUnattendedNeedingAction(?string $tenantSlug = null): int
+    {
+        $qb = $this->createQueryBuilder('d')
+            ->select('COUNT(d.id)')
+            ->andWhere('d.status IN (:st)')
+            ->andWhere('d.attended = false')
+            ->setParameter('st', [
+                FiscalDocument::STATUS_ERROR,
+                FiscalDocument::STATUS_REJECTED,
+                FiscalDocument::STATUS_OBSERVED,
+                FiscalDocument::STATUS_CANCELLED,
+            ]);
+        $this->applyElectronicOnly($qb, true);
+        if ($tenantSlug !== null && $tenantSlug !== '') {
+            $qb->andWhere('d.tenantSlug = :slug')->setParameter('slug', $tenantSlug);
+        }
+
+        return (int) $qb->getQuery()->getSingleScalarResult();
+    }
+
+    /**
      * @return array<int, array{tenant_slug: string, total: int}>
      */
     public function countByTenant(?string $tenantSlug = null, int $limit = 50): array
@@ -314,6 +340,15 @@ class FiscalDocumentRepository extends ServiceEntityRepository
                 ->setParameter('em', ['pending', 'failed'])
                 ->setParameter('acc', FiscalDocument::STATUS_ACCEPTED);
         }
+        // "Atendido" es independiente del status técnico (ver FiscalDocument::$attended) — filtro
+        // aparte, nunca combinado con `group`/`status`, para no confundir revisión administrativa
+        // con veredicto SUNAT/PSE.
+        if (!empty($filters['attended_only'])) {
+            $qb->andWhere('d.attended = true');
+        }
+        if (!empty($filters['unattended_only'])) {
+            $qb->andWhere('d.attended = false');
+        }
 
         return $qb;
     }
@@ -384,6 +419,12 @@ class FiscalDocumentRepository extends ServiceEntityRepository
             ->andWhere('d.status = :status')
             ->andWhere('d.errorType = :etype')
             ->andWhere('d.retryable = true')
+            // Atendido = decisión administrativa de "no reenviar más" — el barrido automático
+            // (cada 60s desde el worker, ver FiscalOrphanRepairService/FiscalWorkerCommand) no
+            // debe pisarla. Sin esto, marcar un documento como atendido no detenía el reintento
+            // automático (solo bloqueaba las acciones manuales), que es justo el problema
+            // reportado.
+            ->andWhere('d.attended = false')
             ->andWhere('(d.nextRetryAt IS NULL OR d.nextRetryAt <= :now)')
             ->andWhere('d.createdAt >= :notBefore')
             ->andWhere('d.updatedAt <= :notAfter')
@@ -452,6 +493,11 @@ class FiscalDocumentRepository extends ServiceEntityRepository
         return $this->createQueryBuilder('d')
             ->andWhere('d.provider IS NULL')
             ->andWhere('d.status IN (:statuses)')
+            // Defensivo: estos statuses (pending/queued/retrying/sending) no deberían tener
+            // attended=true en la práctica (solo se puede atender un status terminal, ver
+            // guard en FiscalController::attend), pero si alguna transición rara lo dejara así,
+            // que no lo reenvíe el barrido automático.
+            ->andWhere('d.attended = false')
             ->andWhere('d.createdAt <= :cutoff')
             ->setParameter('statuses', [
                 FiscalDocument::STATUS_PENDING,

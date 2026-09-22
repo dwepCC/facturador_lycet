@@ -35,6 +35,19 @@ use Symfony\Component\Routing\Annotation\Route;
  */
 class FiscalController extends AbstractController
 {
+    /**
+     * Solo se puede marcar "atendido" un documento en un status terminal que ya requiere una
+     * decisión — nunca uno que sigue en curso (pending/queued/sending/retrying): no tiene
+     * sentido "atender" algo que ni siquiera terminó de procesarse, y evita que alguien congele
+     * sin querer un documento que el sistema todavía puede resolver solo.
+     */
+    private const ATTENDABLE_STATUSES = [
+        FiscalDocument::STATUS_ERROR,
+        FiscalDocument::STATUS_REJECTED,
+        FiscalDocument::STATUS_OBSERVED,
+        FiscalDocument::STATUS_CANCELLED,
+    ];
+
     private FiscalDocumentService $documentService;
     private FiscalDocumentRepository $repo;
     private FiscalDocumentDetailService $detailService;
@@ -236,6 +249,11 @@ class FiscalController extends AbstractController
                 $filters['from'] ?? null,
                 $filters['to'] ?? null
             ),
+            // Aparte de `counts` (por status técnico) — cuántos documentos en un estado que
+            // requiere decisión siguen SIN atender. No filtra por from/to a propósito: es un
+            // pendiente real de trabajo, no algo que deba desaparecer por el rango de fechas
+            // que se esté mirando en la tabla.
+            'unattended_needing_action' => $this->repo->countUnattendedNeedingAction($filters['tenant_slug']),
         ];
 
         if ($useCursor) {
@@ -453,6 +471,67 @@ class FiscalController extends AbstractController
     }
 
     /**
+     * Marca el documento como "atendido": un admin ya lo revisó y decide que no hace falta
+     * ningún reenvío/reintento más, sin importar el status técnico. Bloquea TODAS las acciones
+     * sobre este documento (send/retry/force/poll/email/consult — ver enqueueAction) y lo saca
+     * de los barridos automáticos de reintento (ver FiscalDocumentRepository). Razón opcional
+     * en el body (`reason`), a diferencia de skip-tenant-sync donde es obligatoria: acá puede
+     * ser autoexplicativo ("ya se resolvió con el cliente por WhatsApp") sin necesitar texto.
+     *
+     * Solo permitido en un status terminal (self::ATTENDABLE_STATUSES) — ver comentario ahí.
+     *
+     * @Route("/documents/{uuid}/attend", methods={"POST"})
+     */
+    public function attend(string $uuid, Request $request): JsonResponse
+    {
+        $doc = $this->repo->findOneBy(['documentUuid' => $uuid]);
+        if ($doc === null) {
+            return new JsonResponse(['error' => 'no encontrado'], Response::HTTP_NOT_FOUND);
+        }
+        if (!in_array($doc->getStatus(), self::ATTENDABLE_STATUSES, true)) {
+            return new JsonResponse([
+                'error' => 'Solo se puede marcar atendido un documento en estado error, rechazado, '
+                    . 'con observaciones o anulado — este sigue en curso.',
+                'status' => $doc->getStatus(),
+            ], Response::HTTP_CONFLICT);
+        }
+
+        $body = json_decode($request->getContent(), true);
+        $reason = is_array($body) ? trim((string) ($body['reason'] ?? '')) : '';
+        $attendedBy = is_array($body) ? trim((string) ($body['attended_by'] ?? '')) : '';
+
+        $doc->setAttended(true);
+        $doc->setAttendedReason($reason !== '' ? $reason : null);
+        $doc->setAttendedBy($attendedBy !== '' ? $attendedBy : null);
+        $doc->setAttendedAt(new \DateTimeImmutable());
+        $this->em->flush();
+
+        return new JsonResponse(['ok' => true, 'attended' => true]);
+    }
+
+    /**
+     * Deshace "atendido" — vuelve a habilitar acciones normales y el barrido automático (si el
+     * documento sigue calificando, p. ej. errorType=transient con retryable=true).
+     *
+     * @Route("/documents/{uuid}/unattend", methods={"POST"})
+     */
+    public function unattend(string $uuid): JsonResponse
+    {
+        $doc = $this->repo->findOneBy(['documentUuid' => $uuid]);
+        if ($doc === null) {
+            return new JsonResponse(['error' => 'no encontrado'], Response::HTTP_NOT_FOUND);
+        }
+
+        $doc->setAttended(false);
+        $doc->setAttendedReason(null);
+        $doc->setAttendedBy(null);
+        $doc->setAttendedAt(null);
+        $this->em->flush();
+
+        return new JsonResponse(['ok' => true, 'attended' => false]);
+    }
+
+    /**
      * @Route("/documents/{uuid}/generate-pdf", methods={"POST"})
      */
     public function generatePdf(string $uuid): JsonResponse
@@ -563,6 +642,18 @@ class FiscalController extends AbstractController
             return new JsonResponse(['error' => 'no encontrado'], Response::HTTP_NOT_FOUND);
         }
 
+        // "Atendido" bloquea TODO, incluido force (a diferencia del guard técnico de abajo, que
+        // force sí puede saltarse a propósito): es una decisión humana explícita de que no hace
+        // falta más acción, no un estado técnico reversible. Hay que "desatender" primero.
+        if ($doc->isAttended()) {
+            return new JsonResponse([
+                'error' => 'Este documento ya fue marcado como atendido — no admite ninguna acción.',
+                'hint' => 'Quitar "atendido" primero si de verdad hace falta actuar de nuevo.',
+                'attended_reason' => $doc->getAttendedReason(),
+                'attended_at' => $doc->getAttendedAt()?->format(\DateTimeInterface::ATOM),
+            ], Response::HTTP_CONFLICT);
+        }
+
         if ($enforceGuard && $this->bulkService->isBlockedForNormalAction($doc)) {
             return new JsonResponse([
                 'error' => 'Este documento no admite reenvío/reintento normal en su estado actual',
@@ -644,6 +735,9 @@ class FiscalController extends AbstractController
             'email_pending' => filter_var($request->query->get('email_pending', false), FILTER_VALIDATE_BOOLEAN),
             'email_sent' => $request->query->has('email_sent') ? $request->query->get('email_sent') : null,
             'electronic_only' => !filter_var($request->query->get('include_non_fiscal', false), FILTER_VALIDATE_BOOLEAN),
+            // "Atendido": filtro aparte de status/group (ver comentario en createFilteredQuery).
+            'attended_only' => filter_var($request->query->get('attended_only', false), FILTER_VALIDATE_BOOLEAN),
+            'unattended_only' => filter_var($request->query->get('unattended_only', false), FILTER_VALIDATE_BOOLEAN),
         ];
     }
 
@@ -830,6 +924,11 @@ class FiscalController extends AbstractController
             'sunat_message' => $doc->getSunatMessage(),
             'has_cdr' => $doc->getCdrUrl() !== null && $doc->getCdrUrl() !== '',
             'tenant_sync_state' => $doc->getTenantSyncState(),
+            // Independiente de status/error_type — ver comentario en FiscalDocument::$attended.
+            'attended' => $doc->isAttended(),
+            'attended_reason' => $doc->getAttendedReason(),
+            'attended_by' => $doc->getAttendedBy(),
+            'attended_at' => $doc->getAttendedAt() ? $doc->getAttendedAt()->format(DATE_ATOM) : null,
             'customer_name' => $customerName,
             'company_ruc' => $companyRuc,
             'company_name' => $companyName,

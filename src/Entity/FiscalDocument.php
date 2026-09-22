@@ -177,6 +177,29 @@ class FiscalDocument
     /** @ORM\Column(type="string", length=500, nullable=true) */
     private ?string $unsignedXmlUrl = null;
 
+    /**
+     * "Atendido": decisión administrativa de que este documento ya fue revisado y no necesita
+     * más acción (reenvío/reintento), aparte de su status técnico SUNAT/PSE — un documento
+     * puede quedar 'rejected' o 'error' para siempre (así lo ve SUNAT) pero ya estar atendido
+     * (el admin lo revisó, habló con el cliente, lo resolvió por otra vía). NO se mezcla con
+     * `status`/`errorType`: es un campo aparte, mismo criterio que `tenantSyncState` más abajo.
+     * Solo se puede setear en true cuando el documento está en un estado terminal que requiere
+     * decisión (error/rejected/observed/cancelled) — se valida en el controller, no acá.
+     *
+     * @ORM\Column(type="boolean", options={"default": false})
+     */
+    private bool $attended = false;
+
+    /** @ORM\Column(type="text", nullable=true) */
+    private ?string $attendedReason = null;
+
+    /** Identificador del admin del panel central que marcó/desmarcó (no hay FK: viene de otro servicio). */
+    /** @ORM\Column(type="string", length=255, nullable=true) */
+    private ?string $attendedBy = null;
+
+    /** @ORM\Column(type="datetime", nullable=true) */
+    private ?\DateTimeInterface $attendedAt = null;
+
     /** @ORM\Column(type="datetime") */
     private \DateTimeInterface $createdAt;
 
@@ -281,6 +304,14 @@ class FiscalDocument
     public function setTenantSyncDecidedAt(?\DateTimeInterface $v): self { $this->tenantSyncDecidedAt = $v; return $this; }
     public function getUnsignedXmlUrl(): ?string { return $this->unsignedXmlUrl; }
     public function setUnsignedXmlUrl(?string $v): self { $this->unsignedXmlUrl = $v; return $this; }
+    public function isAttended(): bool { return $this->attended; }
+    public function setAttended(bool $v): self { $this->attended = $v; return $this; }
+    public function getAttendedReason(): ?string { return $this->attendedReason; }
+    public function setAttendedReason(?string $v): self { $this->attendedReason = $v; return $this; }
+    public function getAttendedBy(): ?string { return $this->attendedBy; }
+    public function setAttendedBy(?string $v): self { $this->attendedBy = $v; return $this; }
+    public function getAttendedAt(): ?\DateTimeInterface { return $this->attendedAt; }
+    public function setAttendedAt(?\DateTimeInterface $v): self { $this->attendedAt = $v; return $this; }
     public function getCreatedAt(): \DateTimeInterface { return $this->createdAt; }
     public function getUpdatedAt(): \DateTimeInterface { return $this->updatedAt; }
 }

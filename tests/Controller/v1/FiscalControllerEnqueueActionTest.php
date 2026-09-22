@@ -491,4 +491,59 @@ class FiscalControllerEnqueueActionTest extends TestCase
 
         $this->assertSame(Response::HTTP_ACCEPTED, $result['status']);
     }
+
+    // ------------------------------------------------------------------
+    // "Atendido" (2026-09-22): bloquea toda acción individual, INCLUIDO force —
+    // se evalúa antes que enforceGuard, así que ni siquiera un documento por lo
+    // demás desbloqueado (ej. transient con presupuesto) debe poder encolarse.
+    // ------------------------------------------------------------------
+
+    public function testAttendedDocumentRetryIsBlocked(): void
+    {
+        $doc = $this->makeDocument('uuid-attended-1', FiscalDocument::STATUS_REJECTED, FiscalDocument::ERROR_BUSINESS);
+        $doc->setAttended(true);
+        $doc->setAttendedReason('cliente resolvió por otra vía');
+        [$controller] = $this->buildController($doc, true, null, false);
+
+        $result = $this->decode($controller->retry('uuid-attended-1'));
+
+        $this->assertSame(Response::HTTP_CONFLICT, $result['status']);
+        $this->assertSame('cliente resolvió por otra vía', $result['body']['attended_reason']);
+    }
+
+    public function testAttendedDocumentSendIsBlocked(): void
+    {
+        $doc = $this->makeDocument('uuid-attended-2', FiscalDocument::STATUS_ERROR);
+        $doc->setAttended(true);
+        [$controller] = $this->buildController($doc, true, null, false);
+
+        $result = $this->decode($controller->sendManual('uuid-attended-2'));
+
+        $this->assertSame(Response::HTTP_CONFLICT, $result['status']);
+    }
+
+    /** A diferencia de todos los demás guards de esta clase, "atendido" SÍ bloquea force. */
+    public function testAttendedDocumentForceIsBlockedUnlikeEveryOtherGuard(): void
+    {
+        $doc = $this->makeDocument('uuid-attended-3', FiscalDocument::STATUS_REJECTED, FiscalDocument::ERROR_BUSINESS);
+        $doc->setAttended(true);
+        [$controller] = $this->buildController($doc, true, null, false);
+
+        $result = $this->decode($controller->forceSend('uuid-attended-3'));
+
+        $this->assertSame(Response::HTTP_CONFLICT, $result['status']);
+    }
+
+    public function testNotAttendedDocumentIsUnaffectedByAttendedGuard(): void
+    {
+        // Regresión: un documento con attended=false (default) debe comportarse exactamente
+        // como antes de agregar el campo.
+        $doc = $this->makeDocument('uuid-not-attended', FiscalDocument::STATUS_PENDING);
+        [$controller, , , $em] = $this->buildController($doc);
+        $em->expects($this->once())->method('flush');
+
+        $result = $this->decode($controller->sendManual('uuid-not-attended'));
+
+        $this->assertSame(Response::HTTP_ACCEPTED, $result['status']);
+    }
 }

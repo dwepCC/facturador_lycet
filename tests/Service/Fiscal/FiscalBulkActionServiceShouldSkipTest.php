@@ -204,4 +204,39 @@ class FiscalBulkActionServiceShouldSkipTest extends TestCase
 
         self::assertFalse($this->service()->isBlockedForNormalAction($doc));
     }
+
+    // ------------------------------------------------------------------
+    // "Atendido" (2026-09-22): decisión humana explícita, bloquea TODO en bulk,
+    // incluido 'force' — a diferencia de los guards por error_type de arriba.
+    // ------------------------------------------------------------------
+
+    /** @dataProvider allBulkActions */
+    public function testAttendedSkipsEveryActionIncludingForce(string $action): void
+    {
+        $doc = $this->docWithStatusAndErrorType(FiscalDocument::STATUS_REJECTED, FiscalDocument::ERROR_TRANSIENT);
+        $doc->setAttended(true);
+
+        self::assertTrue($this->shouldSkip($doc, $action), "attended debe omitir incluso action={$action}");
+    }
+
+    public function allBulkActions(): array
+    {
+        return [
+            'send' => ['send'],
+            'retry' => ['retry'],
+            'force' => ['force'],
+            'consult' => ['consult'],
+            'email' => ['email'],
+        ];
+    }
+
+    public function testNotAttendedIsUnaffectedByAttendedGuard(): void
+    {
+        // Regresión: un transitorio agotado no-atendido debe seguir disponible para
+        // retry/send manual, tal como antes de agregar el campo attended.
+        $doc = $this->exhaustedDoc(FiscalDocument::ERROR_TRANSIENT);
+
+        self::assertFalse($this->shouldSkip($doc, 'retry'));
+        self::assertFalse($this->shouldSkip($doc, 'force'));
+    }
 }

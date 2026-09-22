@@ -87,6 +87,13 @@ class FiscalEmitProcessor
         if (in_array($doc->getStatus(), [FiscalDocument::STATUS_ACCEPTED, FiscalDocument::STATUS_OBSERVED], true)) {
             return;
         }
+        // Defensa adicional a los guards de FiscalController/FiscalBulkActionService/
+        // FiscalDocumentRepository (que ya deberían impedir que un documento atendido llegue
+        // hasta acá): cubre la carrera improbable de que ya hubiera un job en Redis cuando se
+        // marcó "atendido". No debe volver a llamar a SUNAT/PSE bajo ninguna circunstancia.
+        if ($doc->isAttended()) {
+            return;
+        }
 
         $doc->setStatus(FiscalDocument::STATUS_SENDING);
         $this->em->flush();
