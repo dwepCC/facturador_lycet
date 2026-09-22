@@ -62,6 +62,14 @@ class FiscalCdrConsultProcessor
         if ($doc === null) {
             return $this->emptyResult('Documento no encontrado');
         }
+        // "Atendido" (2026-09-22): aunque consultar CDR no reenvía nada, SÍ puede reescribir
+        // status/CDR/mensajes vía recover() — un admin que ya marcó el documento como resuelto
+        // no debe verlo cambiar solo porque el ciclo automático de guías (autoRetry=true, ver
+        // clase FiscalWorkerCommand) seguía con un job programado en Redis desde antes de
+        // atenderlo. Mismo criterio que enqueueAction()/shouldSkip(): bloquea TODO, sin excepción.
+        if ($doc->isAttended()) {
+            return $this->emptyResult('Documento atendido — no se consulta CDR automática ni manualmente hasta quitarle "atendido".');
+        }
 
         $hasCdr = $doc->getCdrUrl() !== null && $doc->getCdrUrl() !== '';
         // La consulta de validez/CDR es solo lectura (no reenvía): se permite en cualquier estado,

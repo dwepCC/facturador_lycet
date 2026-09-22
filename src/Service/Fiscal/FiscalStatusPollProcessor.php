@@ -71,6 +71,14 @@ class FiscalStatusPollProcessor
         if ($doc->getStatus() === FiscalDocument::STATUS_ACCEPTED || $doc->getStatus() === FiscalDocument::STATUS_OBSERVED) {
             return;
         }
+        // "Atendido" (2026-09-22): un job de QUEUE_STATUS_POLL programado ANTES de marcar el
+        // documento como atendido puede seguir vivo en Redis (p. ej. "forzar" reemitió y dejó el
+        // job viejo huérfano) — sin este guard, dispararía igual y podría reescribir status/CDR
+        // por debajo de una decisión administrativa ya tomada. Mismo criterio que
+        // FiscalCdrConsultProcessor::processByUuid() y FiscalEmitProcessor::process().
+        if ($doc->isAttended()) {
+            return;
+        }
 
         try {
             [$class, $greenterDoc, $ruc] = $this->deserialize($doc);
