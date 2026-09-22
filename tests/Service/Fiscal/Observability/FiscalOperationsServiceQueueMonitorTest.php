@@ -144,4 +144,27 @@ class FiscalOperationsServiceQueueMonitorTest extends TestCase
         $service = $this->buildService($documents, $this->unreachableQueue());
         $service->queueMonitor('queued', 25, -10);
     }
+
+    /**
+     * "Atendido" (2026-09-22): este monitor es de triage operativo — un documento ya atendido no
+     * debe seguir contando/apareciendo en ningún bucket, sobre todo "failed" (era exactamente el
+     * caso real reportado). findByStatuses/countByStatuses reciben excludeAttended=true SIEMPRE,
+     * no solo para 'failed' — más simple y sin efecto en los demás buckets (attend() solo admite
+     * status terminal, nunca queued/processing/retrying).
+     */
+    public function testFindAndCountByStatusesAlwaysExcludeAttended(): void
+    {
+        $documents = $this->createMock(FiscalDocumentRepository::class);
+        $documents->expects($this->once())
+            ->method('findByStatuses')
+            ->with([FiscalDocument::STATUS_ERROR, FiscalDocument::STATUS_REJECTED], 25, 0, true)
+            ->willReturn([]);
+        $documents->expects($this->atLeastOnce())
+            ->method('countByStatuses')
+            ->with(self::anything(), true)
+            ->willReturn(0);
+
+        $service = $this->buildService($documents, $this->unreachableQueue());
+        $service->queueMonitor('failed');
+    }
 }

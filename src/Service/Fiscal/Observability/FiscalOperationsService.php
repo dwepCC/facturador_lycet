@@ -199,13 +199,17 @@ class FiscalOperationsService
         $limit = max(1, min(100, $limit));
         $offset = max(0, $offset);
 
-        $docs = $this->documents->findByStatuses($statuses, $limit, $offset);
+        // excludeAttended=true: este monitor es de triage operativo, no de auditoría — un
+        // documento ya atendido no debe seguir apareciendo como si necesitara acción (caso real
+        // reportado: "todos los atendidos siguen mostrando como pendiente o error"). Ver
+        // comentario en FiscalDocumentRepository::findByStatuses().
+        $docs = $this->documents->findByStatuses($statuses, $limit, $offset, true);
         $items = array_map([$this, 'serializeQueueItem'], $docs);
-        $total = $this->documents->countByStatuses($statuses);
+        $total = $this->documents->countByStatuses($statuses, true);
 
         $counts = [];
         foreach (self::GROUP_STATUSES as $key => $groupStatuses) {
-            $counts[$key] = $key === $group ? $total : $this->documents->countByStatuses($groupStatuses);
+            $counts[$key] = $key === $group ? $total : $this->documents->countByStatuses($groupStatuses, true);
         }
 
         return [

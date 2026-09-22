@@ -201,39 +201,51 @@ class FiscalDocumentRepository extends ServiceEntityRepository
     }
 
     /**
+     * $excludeAttended=true saca del monitor operativo (FiscalOperationsService::queueMonitor,
+     * bucket "failed") los documentos ya marcados como atendidos — no tiene efecto en
+     * queued/processing/retrying (attend() solo admite status terminal, ver ATTENDABLE_STATUSES
+     * en FiscalController, así que nunca puede haber un atendido en esos buckets), pero en
+     * "failed" (error/rejected) es exactamente el caso real reportado: un documento ya atendido
+     * seguía apareciendo ahí como si necesitara acción. Default false para no tocar otros
+     * llamadores futuros de este método genérico.
+     *
      * @param string[] $statuses
      * @return FiscalDocument[]
      */
-    public function findByStatuses(array $statuses, int $limit = 50, int $offset = 0): array
+    public function findByStatuses(array $statuses, int $limit = 50, int $offset = 0, bool $excludeAttended = false): array
     {
         if ($statuses === []) {
             return [];
         }
-        return $this->createQueryBuilder('d')
+        $qb = $this->createQueryBuilder('d')
             ->where('d.status IN (:st)')
             ->andWhere('d.documentType NOT IN (:nonFiscal)')
             ->setParameter('st', $statuses)
             ->setParameter('nonFiscal', self::NON_FISCAL_TYPES)
             ->orderBy('d.updatedAt', 'DESC')
             ->setMaxResults($limit)
-            ->setFirstResult(max(0, $offset))
-            ->getQuery()
-            ->getResult();
+            ->setFirstResult(max(0, $offset));
+        if ($excludeAttended) {
+            $qb->andWhere('d.attended = false');
+        }
+        return $qb->getQuery()->getResult();
     }
 
-    public function countByStatuses(array $statuses): int
+    public function countByStatuses(array $statuses, bool $excludeAttended = false): int
     {
         if ($statuses === []) {
             return 0;
         }
-        return (int) $this->createQueryBuilder('d')
+        $qb = $this->createQueryBuilder('d')
             ->select('COUNT(d.id)')
             ->where('d.status IN (:st)')
             ->andWhere('d.documentType NOT IN (:nonFiscal)')
             ->setParameter('st', $statuses)
-            ->setParameter('nonFiscal', self::NON_FISCAL_TYPES)
-            ->getQuery()
-            ->getSingleScalarResult();
+            ->setParameter('nonFiscal', self::NON_FISCAL_TYPES);
+        if ($excludeAttended) {
+            $qb->andWhere('d.attended = false');
+        }
+        return (int) $qb->getQuery()->getSingleScalarResult();
     }
 
     /**
