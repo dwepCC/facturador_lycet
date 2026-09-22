@@ -368,6 +368,7 @@ class FiscalOperationsService
             'retry_count' => $doc->getRetryCount(),
             'error_type' => $doc->getErrorType(),
             'retryable' => $doc->isRetryable(),
+            'attended' => $doc->isAttended(),
             'sunat_message' => $sunatMessage,
             'pse_message' => $pseMessage,
             'pse_response' => $pseSummary,

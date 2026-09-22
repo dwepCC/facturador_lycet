@@ -194,6 +194,57 @@ class FiscalContractConsistencyTest extends TestCase
         self::assertArrayHasKey('next_retry_at', $list, 'H3 regresó: list ya no manda next_retry_at');
     }
 
+    /**
+     * "Atendido" (2026-09-22): regresión directa de un bug real encontrado en verificación E2E —
+     * serializeDocSummary() (list) se actualizó para mandar `attended`, pero
+     * FiscalDocumentDetailService::serializeDocument() (detail, GET /documents/{uuid}) se quedó
+     * sin el campo — el modal de detalle del panel central re-consultaba tras marcar "atendido"
+     * y seguía mostrando "No atendido" porque el backend nunca lo mandaba ahí. Mismo patrón que
+     * H3 con error_type, pero con attended.
+     */
+    public function testAttendedIsIdenticalAcrossListDetailAndQueue(): void
+    {
+        $doc = $this->makeDocument();
+        $doc->setAttended(true);
+        $doc->setAttendedReason('cliente resolvió por WhatsApp');
+        $doc->setAttendedBy('admin@tukifac.com');
+        $doc->setAttendedAt(new \DateTimeImmutable('2026-09-22T13:00:00+00:00'));
+
+        $list = $this->serializeViaList($doc);
+        $detail = $this->serializeViaDetail($doc);
+        $queue = $this->serializeViaQueue($doc);
+
+        self::assertTrue($list['attended']);
+        self::assertSame($list['attended'], $detail['attended'], 'detail se quedó sin attended (bug real encontrado en E2E)');
+        self::assertSame($list['attended'], $queue['attended']);
+        self::assertSame('cliente resolvió por WhatsApp', $detail['attended_reason']);
+        self::assertSame('admin@tukifac.com', $detail['attended_by']);
+        self::assertSame($doc->getAttendedAt()->format(DATE_ATOM), $detail['attended_at']);
+    }
+
+    public function testListNeverOmitsAttendedFields(): void
+    {
+        $doc = $this->makeDocument();
+        $list = $this->serializeViaList($doc);
+
+        self::assertArrayHasKey('attended', $list);
+        self::assertArrayHasKey('attended_reason', $list);
+        self::assertArrayHasKey('attended_by', $list);
+        self::assertArrayHasKey('attended_at', $list);
+    }
+
+    /** Regresión directa del bug real: detail (GET /documents/{uuid}) también debe mandar los 4 campos. */
+    public function testDetailNeverOmitsAttendedFields(): void
+    {
+        $doc = $this->makeDocument();
+        $detail = $this->serializeViaDetail($doc);
+
+        self::assertArrayHasKey('attended', $detail);
+        self::assertArrayHasKey('attended_reason', $detail);
+        self::assertArrayHasKey('attended_by', $detail);
+        self::assertArrayHasKey('attended_at', $detail);
+    }
+
     /** Documento sin clasificación (legado/histórico): los 3 serializadores deben devolver null, nunca inventar un valor, y no deben romper (sección 10 — documentos históricos sin error_type). */
     public function testUnclassifiedDocumentIsNullEverywhereWithoutCrashing(): void
     {

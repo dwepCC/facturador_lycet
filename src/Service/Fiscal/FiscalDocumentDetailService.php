@@ -186,6 +186,10 @@ class FiscalDocumentDetailService
             'error_type' => $doc->getErrorType(),
             'retryable' => $doc->isRetryable(),
             'email_status' => $doc->getEmailStatus(),
+            'attended' => $doc->isAttended(),
+            'attended_reason' => $doc->getAttendedReason(),
+            'attended_by' => $doc->getAttendedBy(),
+            'attended_at' => $this->fmt($doc->getAttendedAt()),
             'created_at' => $doc->getCreatedAt()->format(DATE_ATOM),
             'updated_at' => $doc->getUpdatedAt()->format(DATE_ATOM),
         ];
