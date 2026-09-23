@@ -128,13 +128,29 @@ class ValidaPseProvider extends AbstractFiscalProvider
             CURLOPT_POSTFIELDS => $payload,
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 60,
+            // Antes CURLOPT_TIMEOUT=60 sin connect timeout separado: cuando ValidaPSE se
+            // ponía lento, esta única llamada bloqueaba el worker fiscal completo (una sola
+            // instancia, procesamiento secuencial) hasta un minuto entero — 48 casos reales
+            // encontrados en logs de producción en 6 días, cada uno frenando TODA la cola
+            // (de cualquier tenant) mientras duraba. El sistema ya reintenta automáticamente
+            // (hasta 5 intentos con backoff, ver FiscalEmitProcessor), así que fallar rápido
+            // acá y dejar que el retry se encargue es estrictamente mejor que bloquear.
+            CURLOPT_CONNECTTIMEOUT => 8,
+            CURLOPT_TIMEOUT => 15,
         ]);
         $body = curl_exec($ch);
         $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlErrno = curl_errno($ch);
+        $curlError = curl_error($ch);
         curl_close($ch);
 
-        $bodyStr = $body === false ? '' : (string) $body;
+        if ($body === false) {
+            // Timeout, DNS, conexión rechazada, etc. — nunca llegó a haber respuesta HTTP real
+            // que clasificar. Antes esto caía en "PSE HTTP 0: " sin ningún detalle.
+            throw new \RuntimeException('PSE sin respuesta (curl errno ' . $curlErrno . '): ' . $curlError);
+        }
+
+        $bodyStr = (string) $body;
         /** @var array<string, mixed> $pseResp */
         $pseResp = json_decode($bodyStr, true) ?: [];
 
