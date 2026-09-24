@@ -87,6 +87,7 @@ class PseAppProviderClassifyResponseTest extends TestCase
             'VALIDATION_ERROR → manual_only' => ['VALIDATION_ERROR', FiscalErrorBucketClassifier::BUCKET_MANUAL_ONLY],
             'EMISOR_NOT_AFFILIATED → manual_only' => ['EMISOR_NOT_AFFILIATED', FiscalErrorBucketClassifier::BUCKET_MANUAL_ONLY],
             'EMISOR_INACTIVE → manual_only' => ['EMISOR_INACTIVE', FiscalErrorBucketClassifier::BUCKET_MANUAL_ONLY],
+            'TENANT_INACTIVE → manual_only' => ['TENANT_INACTIVE', FiscalErrorBucketClassifier::BUCKET_MANUAL_ONLY],
             'INSUFFICIENT_CREDIT → manual_only' => ['INSUFFICIENT_CREDIT', FiscalErrorBucketClassifier::BUCKET_MANUAL_ONLY],
             'DUPLICATE_DOCUMENT → manual_only' => ['DUPLICATE_DOCUMENT', FiscalErrorBucketClassifier::BUCKET_MANUAL_ONLY],
             'IDEMPOTENCY_IN_PROGRESS → transient' => ['IDEMPOTENCY_IN_PROGRESS', FiscalErrorBucketClassifier::BUCKET_TRANSIENT],

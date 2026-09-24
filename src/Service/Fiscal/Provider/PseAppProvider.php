@@ -236,7 +236,7 @@ class PseAppProvider extends AbstractFiscalProvider
         return match ($codigo) {
             'IDEMPOTENCY_IN_PROGRESS' => FiscalErrorBucketClassifier::BUCKET_TRANSIENT,
             'INVALID_XML', 'UNSUPPORTED_DOCUMENT_TYPE', 'RUC_MISMATCH', 'VALIDATION_ERROR',
-            'EMISOR_NOT_AFFILIATED', 'EMISOR_INACTIVE', 'INSUFFICIENT_CREDIT',
+            'EMISOR_NOT_AFFILIATED', 'EMISOR_INACTIVE', 'TENANT_INACTIVE', 'INSUFFICIENT_CREDIT',
             'DUPLICATE_DOCUMENT' => FiscalErrorBucketClassifier::BUCKET_MANUAL_ONLY,
             default => FiscalErrorBucketClassifier::BUCKET_TRANSIENT, // SIGNING_FAILED, 401, o cualquier código nuevo no visto todavía
         };
