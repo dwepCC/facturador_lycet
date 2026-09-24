@@ -208,9 +208,12 @@ services:
 
     App\Service\Fiscal\Provider\PseAuthBuilder: ~
 
+    App\Service\Fiscal\Provider\PseAppProvider: ~
+
     App\Service\Fiscal\Provider\FiscalProviderResolver:
         arguments:
             $providers:
+                - '@App\Service\Fiscal\Provider\PseAppProvider'
                 - '@App\Service\Fiscal\Provider\ValidaPseProvider'
                 - '@App\Service\Fiscal\Provider\NubefactGreProvider'
                 - '@App\Service\Fiscal\Provider\SunatDirectProvider'

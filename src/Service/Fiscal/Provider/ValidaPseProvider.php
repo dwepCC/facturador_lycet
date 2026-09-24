@@ -32,7 +32,11 @@ class ValidaPseProvider extends AbstractFiscalProvider
 
     public function supports(FiscalDocument $doc, Empresa $empresa): bool
     {
-        return $this->resolveSendMode($doc, $empresa) === 'pse';
+        // Antes solo miraba sendMode==='pse' — con un solo proveedor PSE nunca fue un
+        // problema, pero al registrar PseAppProvider (mismo sendMode) el resolver podía
+        // hacer match con el proveedor equivocado según el orden en services.yaml.
+        return $this->resolveSendMode($doc, $empresa) === 'pse'
+            && PseProviderRegistry::normalizeProvider((string) ($empresa->getProvider() ?? '')) === 'validapse';
     }
 
     public function validateConnection(Empresa $empresa): FiscalConnectionResult
