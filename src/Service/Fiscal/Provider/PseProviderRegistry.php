@@ -23,6 +23,7 @@ final class PseProviderRegistry
     {
         return match (self::normalizeProvider($provider)) {
             'validapse' => 'https://app.validapse.com',
+            'pseapp' => 'https://pse.tukifac.com',
             default => '',
         };
     }
