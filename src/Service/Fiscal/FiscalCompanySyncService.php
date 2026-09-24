@@ -102,7 +102,10 @@ class FiscalCompanySyncService
                 throw new \InvalidArgumentException('PSE: proveedor no soportado o sin URL base configurada');
             }
             $existing = $this->empresaRepository->findByRuc(trim((string) ($payload['ruc'] ?? '')));
-            if ($user === '' && ($existing === null || trim((string) ($existing->getPseUser() ?? '')) === '')) {
+            // pseapp (docs/integraciones/tukifac-integracion-pse.md, repo pse-app) se autentica
+            // solo con Bearer token — a diferencia de ValidaPSE, no tiene concepto de "usuario".
+            $requiresUser = $provider !== 'pseapp';
+            if ($requiresUser && $user === '' && ($existing === null || trim((string) ($existing->getPseUser() ?? '')) === '')) {
                 throw new \InvalidArgumentException('PSE requiere usuario (credenciales ValidaPSE)');
             }
             if ($token === '' && ($existing === null || $existing->resolvePseToken() === '')) {
