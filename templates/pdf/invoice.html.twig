@@ -88,7 +88,7 @@
                             <br><br><strong>Fecha Vencimiento: </strong>  {{ doc.fecVencimiento|date('d/m/Y') }}
                             {% endif %}
                         </td>
-                        <td width="40%" align="left"><strong>Dirección: </strong>  {% if cl.address %}{{ cl.address.direccion }}{% endif %}</td>
+                        <td width="40%" align="left"><strong>Dirección: </strong>  {% if cl.address and cl.address.direccion %}{{ cl.address.direccion }}{% else %}-{% endif %}</td>
                     </tr>
                     {% if isNota %}
                     <tr>
