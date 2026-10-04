@@ -234,10 +234,16 @@ class PseAppProvider extends AbstractFiscalProvider
     private function classifyErrorCode(string $codigo): string
     {
         return match ($codigo) {
-            'IDEMPOTENCY_IN_PROGRESS' => FiscalErrorBucketClassifier::BUCKET_TRANSIENT,
+            // SUNAT_NO_RESPONSE / SUNAT_ERROR_RETRYABLE (503): SUNAT no respondió o falló de forma
+            // transitoria y el PSE ya firmó y cobró. El reintento de este mismo documento (mismo XML y
+            // misma Idempotency-Key) ES el reenvío: el PSE reutiliza el XML ya firmado, sin cobrar de
+            // nuevo. El PSE nunca reenvía por su cuenta. Ver docs/arquitectura/07 §4 (repo pse-app).
+            'IDEMPOTENCY_IN_PROGRESS', 'SUNAT_NO_RESPONSE', 'SUNAT_ERROR_RETRYABLE' => FiscalErrorBucketClassifier::BUCKET_TRANSIENT,
+            // SUNAT_ALREADY_REGISTERED (409): tras un reenvío SUNAT dice que ya tiene el comprobante pero
+            // el PSE no puede recuperar su CDR. Reintentar no cambia nada: requiere revisión humana.
             'INVALID_XML', 'UNSUPPORTED_DOCUMENT_TYPE', 'RUC_MISMATCH', 'VALIDATION_ERROR',
             'EMISOR_NOT_AFFILIATED', 'EMISOR_INACTIVE', 'TENANT_INACTIVE', 'INSUFFICIENT_CREDIT',
-            'DUPLICATE_DOCUMENT' => FiscalErrorBucketClassifier::BUCKET_MANUAL_ONLY,
+            'DUPLICATE_DOCUMENT', 'SUNAT_ALREADY_REGISTERED' => FiscalErrorBucketClassifier::BUCKET_MANUAL_ONLY,
             default => FiscalErrorBucketClassifier::BUCKET_TRANSIENT, // SIGNING_FAILED, 401, o cualquier código nuevo no visto todavía
         };
     }

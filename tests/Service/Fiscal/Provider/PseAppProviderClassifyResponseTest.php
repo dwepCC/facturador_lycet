@@ -90,7 +90,10 @@ class PseAppProviderClassifyResponseTest extends TestCase
             'TENANT_INACTIVE → manual_only' => ['TENANT_INACTIVE', FiscalErrorBucketClassifier::BUCKET_MANUAL_ONLY],
             'INSUFFICIENT_CREDIT → manual_only' => ['INSUFFICIENT_CREDIT', FiscalErrorBucketClassifier::BUCKET_MANUAL_ONLY],
             'DUPLICATE_DOCUMENT → manual_only' => ['DUPLICATE_DOCUMENT', FiscalErrorBucketClassifier::BUCKET_MANUAL_ONLY],
+            'SUNAT_ALREADY_REGISTERED → manual_only' => ['SUNAT_ALREADY_REGISTERED', FiscalErrorBucketClassifier::BUCKET_MANUAL_ONLY],
             'IDEMPOTENCY_IN_PROGRESS → transient' => ['IDEMPOTENCY_IN_PROGRESS', FiscalErrorBucketClassifier::BUCKET_TRANSIENT],
+            'SUNAT_NO_RESPONSE → transient' => ['SUNAT_NO_RESPONSE', FiscalErrorBucketClassifier::BUCKET_TRANSIENT],
+            'SUNAT_ERROR_RETRYABLE → transient' => ['SUNAT_ERROR_RETRYABLE', FiscalErrorBucketClassifier::BUCKET_TRANSIENT],
             'código desconocido → transient (conservador, reintenta antes de dar por manual)' => ['ALGO_NUEVO_NO_VISTO', FiscalErrorBucketClassifier::BUCKET_TRANSIENT],
         ];
     }
@@ -108,6 +111,22 @@ class PseAppProviderClassifyResponseTest extends TestCase
         self::assertFalse($result->success);
         self::assertSame($expectedBucket, $result->errorType);
         self::assertSame($expectedBucket === FiscalErrorBucketClassifier::BUCKET_BUSINESS, $result->rejected);
+    }
+
+    public function testSunatNoResponseKeepsTheDocumentRetryableNotRejected(): void
+    {
+        // 503 del PSE: el envío quedó incierto. No es un rechazo de negocio: tukifac reintenta.
+        $result = $this->invoke(503, [
+            'error' => ['codigo' => 'SUNAT_NO_RESPONSE', 'mensaje' => 'SUNAT no respondió...'],
+            'document_id' => '01J...',
+            'status' => 'UNKNOWN',
+            'reenviable' => true,
+        ]);
+
+        self::assertFalse($result->success);
+        self::assertFalse($result->rejected);
+        self::assertSame('SUNAT_NO_RESPONSE', $result->sunatCode);
+        self::assertSame(FiscalErrorBucketClassifier::BUCKET_TRANSIENT, $result->errorType);
     }
 
     public function testPseResponseIsAlwaysCapturedForAudit(): void
