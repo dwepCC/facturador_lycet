@@ -241,6 +241,80 @@ class FiscalDocumentRepository extends ServiceEntityRepository
         return (int) $qb->getQuery()->getSingleScalarResult();
     }
 
+    /** Minutos sin avance a partir de los cuales un documento "vivo" se considera atascado. */
+    public const STUCK_QUEUED_MIN = 15;
+    public const STUCK_SENDING_MIN = 10;
+    public const STUCK_RETRY_OVERDUE_MIN = 10;
+    public const STUCK_RETRY_NO_SCHEDULE_MIN = 30;
+
+    private function stuckQuery(): QueryBuilder
+    {
+        $now = new \DateTimeImmutable();
+        $qb = $this->createQueryBuilder('d')
+            ->andWhere('d.documentType NOT IN (:nonFiscal)')
+            ->andWhere(
+                "(d.status IN ('pending','queued') AND d.updatedAt < :tq)"
+                . " OR (d.status = 'sending' AND d.updatedAt < :ts)"
+                . " OR (d.status = 'sent' AND d.updatedAt < :tn)"
+                . " OR (d.status = 'retrying' AND ((d.nextRetryAt IS NOT NULL AND d.nextRetryAt < :tr)"
+                . " OR (d.nextRetryAt IS NULL AND d.updatedAt < :tn)))"
+            )
+            ->setParameter('nonFiscal', self::NON_FISCAL_TYPES)
+            ->setParameter('tq', $now->modify('-' . self::STUCK_QUEUED_MIN . ' minutes'))
+            ->setParameter('ts', $now->modify('-' . self::STUCK_SENDING_MIN . ' minutes'))
+            ->setParameter('tr', $now->modify('-' . self::STUCK_RETRY_OVERDUE_MIN . ' minutes'))
+            ->setParameter('tn', $now->modify('-' . self::STUCK_RETRY_NO_SCHEDULE_MIN . ' minutes'));
+
+        return $qb;
+    }
+
+    /**
+     * Documentos en cola/enviando/reintentando que no avanzan hace demasiado (los más atrasados primero).
+     *
+     * @return FiscalDocument[]
+     */
+    public function findStuck(int $limit = 25, int $offset = 0): array
+    {
+        return $this->stuckQuery()
+            ->orderBy('d.updatedAt', 'ASC')
+            ->setMaxResults($limit)
+            ->setFirstResult(max(0, $offset))
+            ->getQuery()
+            ->getResult();
+    }
+
+    public function countStuck(): int
+    {
+        return (int) $this->stuckQuery()->select('COUNT(d.id)')->getQuery()->getSingleScalarResult();
+    }
+
+    /**
+     * ¿Este documento está atascado? Misma regla que findStuck(), para marcar filas ya cargadas.
+     */
+    public static function isStuck(FiscalDocument $doc, ?\DateTimeImmutable $now = null): bool
+    {
+        $now = $now ?? new \DateTimeImmutable();
+        $ageMin = static fn (?\DateTimeInterface $t): ?float => $t === null ? null : ($now->getTimestamp() - $t->getTimestamp()) / 60;
+        switch ($doc->getStatus()) {
+            case FiscalDocument::STATUS_PENDING:
+            case FiscalDocument::STATUS_QUEUED:
+                return ($ageMin($doc->getUpdatedAt()) ?? 0) > self::STUCK_QUEUED_MIN;
+            case FiscalDocument::STATUS_SENDING:
+                return ($ageMin($doc->getUpdatedAt()) ?? 0) > self::STUCK_SENDING_MIN;
+            case FiscalDocument::STATUS_SENT:
+                // enviado a SUNAT, esperando el CDR: puede tardar más que un envío en curso
+                return ($ageMin($doc->getUpdatedAt()) ?? 0) > self::STUCK_RETRY_NO_SCHEDULE_MIN;
+            case FiscalDocument::STATUS_RETRYING:
+                if ($doc->getNextRetryAt() !== null) {
+                    return ($ageMin($doc->getNextRetryAt()) ?? 0) > self::STUCK_RETRY_OVERDUE_MIN;
+                }
+
+                return ($ageMin($doc->getUpdatedAt()) ?? 0) > self::STUCK_RETRY_NO_SCHEDULE_MIN;
+            default:
+                return false;
+        }
+    }
+
     /**
      * @param array<string, mixed> $filters
      */

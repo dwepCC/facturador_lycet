@@ -50,13 +50,18 @@ class FiscalOperationsService
      */
     public function summary(): array
     {
-        $this->alertService->runDetection();
+        // La detección escribe en BD: como mucho una vez por minuto, no en cada consulta del panel.
+        $this->alertService->runDetectionThrottled(60);
 
-        $today = new \DateTimeImmutable('today midnight');
+        // "Hoy" = día calendario de Perú (los datos se guardan en UTC), no la medianoche del servidor.
+        $today = (new \DateTimeImmutable('today midnight', new \DateTimeZone('America/Lima')))
+            ->setTimezone(new \DateTimeZone('UTC'));
         // Fase 5: solo se leen 'documents_today'/'pending' de este resultado — includeTenants
         // false evita calcular y descartar countByTenant() en cada poll de 30s (ver
         // FiscalDocumentDetailService::globalStats()).
-        $stats = $this->detailService->globalStats(null, $today, null, null, false);
+        // Sin fecha "desde": "pendientes" es lo que está pendiente AHORA, sin importar cuándo se creó
+        // (antes solo contaba lo creado hoy y un documento atascado desde ayer no aparecía).
+        $stats = $this->detailService->globalStats(null, null, null, null, false);
         $auditToday = $this->auditLogs->globalSummarySince($today);
 
         $errorsToday = (int) ($auditToday['failures'] ?? 0);
@@ -74,6 +79,10 @@ class FiscalOperationsService
             'cards' => [
                 'documents_today' => $stats['documents_today'] ?? 0,
                 'pending' => $stats['pending'] ?? 0,
+                // Atascados: en cola/enviando/reintentando sin avanzar. Por atender: con error, rechazados o
+                // anulados que nadie ha atendido (se gestionan en Documentos fiscales).
+                'stuck' => $this->documents->countStuck(),
+                'needs_action' => $this->documents->countUnattendedNeedingAction(),
                 'errors_today' => $errorsToday,
                 'retries_today' => $retriesToday,
                 'avg_duration_ms' => $avgDuration,
@@ -95,6 +104,9 @@ class FiscalOperationsService
         'failed' => [FiscalDocument::STATUS_ERROR, FiscalDocument::STATUS_REJECTED],
         'retrying' => [FiscalDocument::STATUS_RETRYING],
     ];
+
+    /** Pestañas del monitor en vivo. 'failed' sigue aceptado por compatibilidad, pero ya no se ofrece. */
+    private const LIVE_GROUPS = ['queued', 'processing', 'retrying', 'stuck'];
 
     /**
      * @param array<string, mixed> $filters
@@ -192,10 +204,9 @@ class FiscalOperationsService
      */
     public function queueMonitor(string $group = 'queued', int $limit = 25, int $offset = 0): array
     {
-        if (!isset(self::GROUP_STATUSES[$group])) {
+        if (!isset(self::GROUP_STATUSES[$group]) && $group !== 'stuck') {
             $group = 'queued';
         }
-        $statuses = self::GROUP_STATUSES[$group];
         $limit = max(1, min(100, $limit));
         $offset = max(0, $offset);
 
@@ -203,14 +214,28 @@ class FiscalOperationsService
         // documento ya atendido no debe seguir apareciendo como si necesitara acción (caso real
         // reportado: "todos los atendidos siguen mostrando como pendiente o error"). Ver
         // comentario en FiscalDocumentRepository::findByStatuses().
-        $docs = $this->documents->findByStatuses($statuses, $limit, $offset, true);
+        if ($group === 'stuck') {
+            $docs = $this->documents->findStuck($limit, $offset);
+            $total = $this->documents->countStuck();
+        } else {
+            $statuses = self::GROUP_STATUSES[$group];
+            $docs = $this->documents->findByStatuses($statuses, $limit, $offset, true);
+            $total = $this->documents->countByStatuses($statuses, true);
+        }
         $items = array_map([$this, 'serializeQueueItem'], $docs);
-        $total = $this->documents->countByStatuses($statuses, true);
 
         $counts = [];
-        foreach (self::GROUP_STATUSES as $key => $groupStatuses) {
-            $counts[$key] = $key === $group ? $total : $this->documents->countByStatuses($groupStatuses, true);
+        foreach (self::LIVE_GROUPS as $key) {
+            if ($key === $group) {
+                $counts[$key] = $total;
+            } elseif ($key === 'stuck') {
+                $counts[$key] = $this->documents->countStuck();
+            } else {
+                $counts[$key] = $this->documents->countByStatuses(self::GROUP_STATUSES[$key], true);
+            }
         }
+        // Lo que ya no es "en vivo" (error/rechazado/anulado sin atender) se gestiona en Documentos fiscales.
+        $counts['needs_action'] = $this->documents->countUnattendedNeedingAction();
 
         return [
             'group' => $group,
@@ -285,6 +310,12 @@ class FiscalOperationsService
         }
 
         $doc->setStatus(FiscalDocument::STATUS_CANCELLED);
+        // Cancelar fue una decisión explícita del administrador: no debe volver a aparecer como
+        // pendiente de gestión (se puede revertir con "Quitar atendido").
+        $doc->setAttended(true);
+        $doc->setAttendedAt(new \DateTimeImmutable());
+        $doc->setAttendedBy('operaciones');
+        $doc->setAttendedReason('Cancelado desde Operaciones fiscales');
         $this->em->flush();
 
         try {
@@ -376,6 +407,10 @@ class FiscalOperationsService
             'queued_at' => $doc->getQueuedAt() ? $doc->getQueuedAt()->format(DATE_ATOM) : null,
             'next_retry_at' => $doc->getNextRetryAt() ? $doc->getNextRetryAt()->format(DATE_ATOM) : null,
             'created_at' => $doc->getCreatedAt()->format(DATE_ATOM),
+            'updated_at' => $doc->getUpdatedAt()->format(DATE_ATOM),
+            // Tiempo sin avanzar y si ya se considera atascado (normal vs. algo que mirar).
+            'age_seconds' => max(0, time() - $doc->getUpdatedAt()->getTimestamp()),
+            'stuck' => FiscalDocumentRepository::isStuck($doc),
         ];
     }
 }

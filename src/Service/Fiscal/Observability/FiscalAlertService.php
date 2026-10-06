@@ -27,6 +27,9 @@ class FiscalAlertService
     private EmpresaRepository $empresas;
     private FiscalQueueService $queue;
 
+    /** @var array<string, bool> clave "tipo|tenant" de las condiciones que siguen activas en esta pasada */
+    private array $activeKeys = [];
+
     public function __construct(
         EntityManagerInterface $em,
         FiscalAlertRepository $alerts,
@@ -43,12 +46,132 @@ class FiscalAlertService
 
     public function runDetection(): int
     {
+        $this->activeKeys = [];
         $created = 0;
-        $created += $this->detectConnectionIssues();
-        $created += $this->detectQueueSaturation();
-        $created += $this->detectRetryAnomalies();
-        $created += $this->detectConsecutiveErrors();
+        try {
+            $created += $this->detectConnectionIssues();
+            $created += $this->detectQueueSaturation();
+            $created += $this->detectRetryAnomalies();
+            $created += $this->detectConsecutiveErrors();
+        } catch (\Throwable) {
+            // Si alguna detección falló, el conjunto de condiciones activas está incompleto: no se
+            // resuelve nada esta vez (mejor una alerta de más que cerrar una real).
+            return $created;
+        }
+        $this->resolveCleared();
+
         return $created;
+    }
+
+    /**
+     * Igual que runDetection() pero como máximo una vez cada $minSeconds (por servidor). Las
+     * pantallas que consultan el resumen cada 30 s no deben disparar la detección completa (que
+     * escribe en BD) en cada consulta.
+     */
+    public function runDetectionThrottled(int $minSeconds = 60): int
+    {
+        $file = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'fiscal_alert_detection.ts';
+        $last = is_file($file) ? (int) @filemtime($file) : 0;
+        if ($last > 0 && (time() - $last) < $minSeconds) {
+            return 0;
+        }
+        @touch($file);
+
+        return $this->runDetection();
+    }
+
+    /**
+     * Cierra automáticamente las alertas cuya condición ya no se cumple (tenant reconectado, cola
+     * normalizada, etc.). Sin esto una alerta quedaba abierta para siempre.
+     */
+    private function resolveCleared(): void
+    {
+        $evaluated = [
+            FiscalAlert::TYPE_CERT_EXPIRING,
+            FiscalAlert::TYPE_TENANT_DISCONNECTED,
+            FiscalAlert::TYPE_RETRY_ANOMALY,
+            FiscalAlert::TYPE_CONSECUTIVE_ERRORS,
+        ];
+        if ($this->queue->isEnabled()) {
+            $evaluated[] = FiscalAlert::TYPE_QUEUE_SATURATED;
+        }
+        $changed = false;
+        foreach ($this->alerts->findBy(['resolvedAt' => null]) as $alert) {
+            if (!in_array($alert->getAlertType(), $evaluated, true)) {
+                continue;
+            }
+            if (isset($this->activeKeys[$alert->getAlertType() . '|' . ($alert->getTenantSlug() ?? '')])) {
+                continue;
+            }
+            $alert->setResolvedAt(new \DateTimeImmutable());
+            $alert->setMetadataJson($this->mergeMeta($alert->getMetadataJson(), ['resolved_by' => 'auto']));
+            $changed = true;
+        }
+        if ($changed) {
+            try {
+                $this->em->flush();
+            } catch (\Throwable) {
+            }
+        }
+    }
+
+    /**
+     * "Reconocer": alguien ya la vio. Deja de contar para el estado del sistema pero sigue visible
+     * (atenuada) mientras la condición exista.
+     *
+     * @return array<string, mixed>|null null si no existe
+     */
+    public function acknowledge(int $id, ?string $by): ?array
+    {
+        $alert = $this->alerts->find($id);
+        if ($alert === null) {
+            return null;
+        }
+        if ($alert->getAcknowledgedAt() === null) {
+            $alert->setAcknowledgedAt(new \DateTimeImmutable());
+            $alert->setMetadataJson($this->mergeMeta($alert->getMetadataJson(), ['ack_by' => $by]));
+            $this->em->flush();
+        }
+
+        return $this->serialize($alert);
+    }
+
+    /**
+     * "Resolver": se cierra a mano. Si la condición sigue ocurriendo, la próxima detección abrirá
+     * una alerta nueva.
+     *
+     * @return array<string, mixed>|null null si no existe
+     */
+    public function resolve(int $id, ?string $by): ?array
+    {
+        $alert = $this->alerts->find($id);
+        if ($alert === null) {
+            return null;
+        }
+        if ($alert->getResolvedAt() === null) {
+            $now = new \DateTimeImmutable();
+            $alert->setResolvedAt($now);
+            if ($alert->getAcknowledgedAt() === null) {
+                $alert->setAcknowledgedAt($now);
+            }
+            $alert->setMetadataJson($this->mergeMeta($alert->getMetadataJson(), ['resolved_by' => $by]));
+            $this->em->flush();
+        }
+
+        return $this->serialize($alert);
+    }
+
+    /**
+     * @param array<string, mixed> $extra
+     */
+    private function mergeMeta(?string $json, array $extra): string
+    {
+        $data = $json ? json_decode($json, true) : [];
+        if (!is_array($data)) {
+            $data = [];
+        }
+
+        return json_encode(array_merge($data, $extra), JSON_UNESCAPED_UNICODE) ?: '{}';
     }
 
     /**
@@ -56,7 +179,30 @@ class FiscalAlertService
      */
     public function listOpen(int $limit = 50): array
     {
-        return array_map(fn (FiscalAlert $a) => $this->serialize($a), $this->alerts->findOpen($limit));
+        $rank = ['critical' => 0, 'warning' => 1];
+        $open = $this->alerts->findOpen($limit);
+        // Sin reconocer primero, luego por severidad y las más recientes arriba.
+        usort($open, static function (FiscalAlert $a, FiscalAlert $b) use ($rank): int {
+            $ackA = $a->getAcknowledgedAt() === null ? 0 : 1;
+            $ackB = $b->getAcknowledgedAt() === null ? 0 : 1;
+            if ($ackA !== $ackB) {
+                return $ackA <=> $ackB;
+            }
+            $sevA = $rank[$a->getSeverity()] ?? 2;
+            $sevB = $rank[$b->getSeverity()] ?? 2;
+            if ($sevA !== $sevB) {
+                return $sevA <=> $sevB;
+            }
+
+            return $b->getCreatedAt() <=> $a->getCreatedAt();
+        });
+
+        return array_map(fn (FiscalAlert $a) => $this->serialize($a), $open);
+    }
+
+    public function countUnacknowledged(): int
+    {
+        return $this->alerts->countUnacknowledged();
     }
 
     public function countOpen(): int
@@ -258,6 +404,9 @@ SQL,
         string $message,
         array $meta = []
     ): bool {
+        // La condición sigue activa en esta pasada (aunque ya exista la alerta): no se auto-resuelve.
+        $this->activeKeys[$type . '|' . ($tenantSlug ?? '')] = true;
+
         $existing = $this->alerts->createQueryBuilder('a')
             ->where('a.alertType = :t')
             ->andWhere('a.resolvedAt IS NULL')
@@ -314,6 +463,9 @@ SQL,
             'message' => $a->getMessage(),
             'metadata' => $a->getMetadataJson() ? json_decode($a->getMetadataJson(), true) : null,
             'created_at' => $a->getCreatedAt()->format(DATE_ATOM),
+            'acknowledged_at' => $a->getAcknowledgedAt() ? $a->getAcknowledgedAt()->format(DATE_ATOM) : null,
+            'resolved_at' => $a->getResolvedAt() ? $a->getResolvedAt()->format(DATE_ATOM) : null,
+            'age_seconds' => max(0, time() - $a->getCreatedAt()->getTimestamp()),
         ];
     }
 }

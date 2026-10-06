@@ -105,7 +105,7 @@ class FiscalOperationsServiceQueueMonitorTest extends TestCase
         self::assertSame(7, $result['counts']['retrying']);
     }
 
-    public function testCountsIncludeAllFourGroupsRegardlessOfWhichIsActive(): void
+    public function testCountsIncludeLiveGroupsStuckAndNeedsActionRegardlessOfWhichIsActive(): void
     {
         $documents = $this->createMock(FiscalDocumentRepository::class);
         $documents->method('findByStatuses')->willReturn([]);
@@ -117,12 +117,17 @@ class FiscalOperationsServiceQueueMonitorTest extends TestCase
                 return 1;
             }
         );
+        $documents->method('countStuck')->willReturn(4);
+        $documents->method('countUnattendedNeedingAction')->willReturn(17);
 
         $service = $this->buildService($documents, $this->unreachableQueue());
         $result = $service->queueMonitor('processing');
 
-        self::assertSame(['queued', 'processing', 'failed', 'retrying'], array_keys($result['counts']));
+        // 'failed' ya no es una pestaña en vivo: lo que requiere acción se gestiona en Documentos fiscales.
+        self::assertSame(['queued', 'processing', 'retrying', 'stuck', 'needs_action'], array_keys($result['counts']));
         self::assertSame(3, $result['counts']['processing']);
+        self::assertSame(4, $result['counts']['stuck']);
+        self::assertSame(17, $result['counts']['needs_action']);
     }
 
     public function testLimitIsCappedBetween1And100(): void

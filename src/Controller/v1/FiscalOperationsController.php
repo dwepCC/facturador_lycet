@@ -92,8 +92,41 @@ class FiscalOperationsController extends AbstractController
     {
         return new JsonResponse([
             'open_count' => $this->alerts->countOpen(),
+            'unacknowledged_count' => $this->alerts->countUnacknowledged(),
             'items' => $this->alerts->listOpen(100),
         ]);
+    }
+
+    /**
+     * @Route("/alerts/{id}/acknowledge", requirements={"id"="\d+"}, methods={"POST"})
+     */
+    public function alertAcknowledge(int $id, Request $request): JsonResponse
+    {
+        $alert = $this->alerts->acknowledge($id, $this->actor($request));
+
+        return $alert === null
+            ? new JsonResponse(['error' => 'Alerta no encontrada'], Response::HTTP_NOT_FOUND)
+            : new JsonResponse(['alert' => $alert]);
+    }
+
+    /**
+     * @Route("/alerts/{id}/resolve", requirements={"id"="\d+"}, methods={"POST"})
+     */
+    public function alertResolve(int $id, Request $request): JsonResponse
+    {
+        $alert = $this->alerts->resolve($id, $this->actor($request));
+
+        return $alert === null
+            ? new JsonResponse(['error' => 'Alerta no encontrada'], Response::HTTP_NOT_FOUND)
+            : new JsonResponse(['alert' => $alert]);
+    }
+
+    private function actor(Request $request): ?string
+    {
+        $body = json_decode((string) $request->getContent(), true);
+        $by = is_array($body) ? ($body['by'] ?? null) : null;
+
+        return is_string($by) && $by !== '' ? mb_substr($by, 0, 120) : null;
     }
 
     /**

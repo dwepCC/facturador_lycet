@@ -61,14 +61,10 @@ class FiscalHealthService
             ->getQuery()
             ->getSingleScalarResult();
 
-        $openAlerts = $this->alerts->countOpen();
-        $criticalAlerts = (int) $this->alerts->createQueryBuilder('a')
-            ->select('COUNT(a.id)')
-            ->where('a.resolvedAt IS NULL')
-            ->andWhere('a.severity = :s')
-            ->setParameter('s', 'critical')
-            ->getQuery()
-            ->getSingleScalarResult();
+        // Solo cuentan las alertas sin reconocer: una ya reconocida por un operador no debe dejar el
+        // sistema marcado como degradado/crítico.
+        $openAlerts = $this->alerts->countUnacknowledged();
+        $criticalAlerts = $this->alerts->countUnacknowledged('critical');
 
         $status = $this->resolveOverallStatus(
             $redisConnected,
