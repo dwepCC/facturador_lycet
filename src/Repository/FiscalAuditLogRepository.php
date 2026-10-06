@@ -81,7 +81,8 @@ SQL;
     public function tenantOperationsSummary(int $hours = 24): array
     {
         $conn = $this->getEntityManager()->getConnection();
-        $since = (new \DateTimeImmutable("-{$hours} hours"))->format('Y-m-d H:i:s');
+        // fiscal_audit_logs lo escribe el worker: la ventana se expresa en SU reloj (ver FiscalClock).
+        $since = \App\Service\Fiscal\FiscalClock::cliNow(new \DateTimeImmutable("-{$hours} hours"))->format('Y-m-d H:i:s');
         return $conn->fetchAllAssociative(
             <<<'SQL'
 SELECT

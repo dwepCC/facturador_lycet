@@ -6,6 +6,7 @@ namespace App\Repository;
 
 use App\Entity\FiscalDocument;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
+use App\Service\Fiscal\FiscalClock;
 use Doctrine\ORM\QueryBuilder;
 use Doctrine\Persistence\ManagerRegistry;
 
@@ -247,13 +248,19 @@ class FiscalDocumentRepository extends ServiceEntityRepository
     public const STUCK_RETRY_OVERDUE_MIN = 10;
     public const STUCK_RETRY_NO_SCHEDULE_MIN = 30;
 
+    /**
+     * Cada columna usa el reloj del proceso que la escribe (ver FiscalClock): queued_at/created_at los
+     * escribe la web (el instante hidratado ya es correcto); updated_at y next_retry_at los mueve el
+     * worker (hora de Berlín). Los umbrales se expresan en el reloj de cada columna.
+     */
     private function stuckQuery(): QueryBuilder
     {
         $now = new \DateTimeImmutable();
+        $nowCli = FiscalClock::cliNow($now);
         $qb = $this->createQueryBuilder('d')
             ->andWhere('d.documentType NOT IN (:nonFiscal)')
             ->andWhere(
-                "(d.status IN ('pending','queued') AND d.updatedAt < :tq)"
+                "(d.status IN ('pending','queued') AND COALESCE(d.queuedAt, d.createdAt) < :tq)"
                 . " OR (d.status = 'sending' AND d.updatedAt < :ts)"
                 . " OR (d.status = 'sent' AND d.updatedAt < :tn)"
                 . " OR (d.status = 'retrying' AND ((d.nextRetryAt IS NOT NULL AND d.nextRetryAt < :tr)"
@@ -261,9 +268,9 @@ class FiscalDocumentRepository extends ServiceEntityRepository
             )
             ->setParameter('nonFiscal', self::NON_FISCAL_TYPES)
             ->setParameter('tq', $now->modify('-' . self::STUCK_QUEUED_MIN . ' minutes'))
-            ->setParameter('ts', $now->modify('-' . self::STUCK_SENDING_MIN . ' minutes'))
-            ->setParameter('tr', $now->modify('-' . self::STUCK_RETRY_OVERDUE_MIN . ' minutes'))
-            ->setParameter('tn', $now->modify('-' . self::STUCK_RETRY_NO_SCHEDULE_MIN . ' minutes'));
+            ->setParameter('ts', $nowCli->modify('-' . self::STUCK_SENDING_MIN . ' minutes'))
+            ->setParameter('tr', $nowCli->modify('-' . self::STUCK_RETRY_OVERDUE_MIN . ' minutes'))
+            ->setParameter('tn', $nowCli->modify('-' . self::STUCK_RETRY_NO_SCHEDULE_MIN . ' minutes'));
 
         return $qb;
     }
@@ -289,27 +296,45 @@ class FiscalDocumentRepository extends ServiceEntityRepository
     }
 
     /**
+     * Instante real desde el que el documento está en su estado actual "en vivo" (null si no aplica).
+     */
+    public static function stateSince(FiscalDocument $doc): ?\DateTimeImmutable
+    {
+        switch ($doc->getStatus()) {
+            case FiscalDocument::STATUS_PENDING:
+            case FiscalDocument::STATUS_QUEUED:
+                return FiscalClock::fromWeb($doc->getQueuedAt() ?? $doc->getCreatedAt());
+            case FiscalDocument::STATUS_SENDING:
+            case FiscalDocument::STATUS_SENT:
+            case FiscalDocument::STATUS_RETRYING:
+                return FiscalClock::fromCli($doc->getUpdatedAt());
+            default:
+                return null;
+        }
+    }
+
+    /**
      * ¿Este documento está atascado? Misma regla que findStuck(), para marcar filas ya cargadas.
      */
     public static function isStuck(FiscalDocument $doc, ?\DateTimeImmutable $now = null): bool
     {
         $now = $now ?? new \DateTimeImmutable();
-        $ageMin = static fn (?\DateTimeInterface $t): ?float => $t === null ? null : ($now->getTimestamp() - $t->getTimestamp()) / 60;
+        $minutesSince = static fn (?\DateTimeImmutable $t): float => $t === null ? 0.0 : ($now->getTimestamp() - $t->getTimestamp()) / 60;
         switch ($doc->getStatus()) {
             case FiscalDocument::STATUS_PENDING:
             case FiscalDocument::STATUS_QUEUED:
-                return ($ageMin($doc->getUpdatedAt()) ?? 0) > self::STUCK_QUEUED_MIN;
+                return $minutesSince(self::stateSince($doc)) > self::STUCK_QUEUED_MIN;
             case FiscalDocument::STATUS_SENDING:
-                return ($ageMin($doc->getUpdatedAt()) ?? 0) > self::STUCK_SENDING_MIN;
+                return $minutesSince(self::stateSince($doc)) > self::STUCK_SENDING_MIN;
             case FiscalDocument::STATUS_SENT:
                 // enviado a SUNAT, esperando el CDR: puede tardar más que un envío en curso
-                return ($ageMin($doc->getUpdatedAt()) ?? 0) > self::STUCK_RETRY_NO_SCHEDULE_MIN;
+                return $minutesSince(self::stateSince($doc)) > self::STUCK_RETRY_NO_SCHEDULE_MIN;
             case FiscalDocument::STATUS_RETRYING:
                 if ($doc->getNextRetryAt() !== null) {
-                    return ($ageMin($doc->getNextRetryAt()) ?? 0) > self::STUCK_RETRY_OVERDUE_MIN;
+                    return $minutesSince(FiscalClock::fromCli($doc->getNextRetryAt())) > self::STUCK_RETRY_OVERDUE_MIN;
                 }
 
-                return ($ageMin($doc->getUpdatedAt()) ?? 0) > self::STUCK_RETRY_NO_SCHEDULE_MIN;
+                return $minutesSince(self::stateSince($doc)) > self::STUCK_RETRY_NO_SCHEDULE_MIN;
             default:
                 return false;
         }

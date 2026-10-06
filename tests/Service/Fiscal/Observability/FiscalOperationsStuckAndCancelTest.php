@@ -9,6 +9,7 @@ use App\Repository\EmpresaRepository;
 use App\Repository\FiscalAuditLogRepository;
 use App\Repository\FiscalDocumentRepository;
 use App\Service\Fiscal\FiscalDocumentDetailService;
+use App\Service\Fiscal\FiscalClock;
 use App\Service\Fiscal\FiscalQueueService;
 use App\Service\Fiscal\Observability\FiscalAlertService;
 use App\Service\Fiscal\Observability\FiscalAuditService;
@@ -28,9 +29,16 @@ class FiscalOperationsStuckAndCancelTest extends TestCase
         $doc->setStatus($status);
         $ref = new \ReflectionProperty(FiscalDocument::class, 'updatedAt');
         $ref->setAccessible(true);
-        $ref->setValue($doc, new \DateTimeImmutable($updated ?? 'now'));
+        // updated_at / next_retry_at los escribe el worker: se construyen con SU reloj (ver FiscalClock),
+        // así la prueba no depende de la zona horaria del proceso que la ejecuta.
+        $cli = FiscalClock::cliTimezone();
+        $ref->setValue($doc, new \DateTimeImmutable($updated ?? 'now', $cli));
+        // En cola/pendiente el reloj que cuenta es queued_at (lo escribe la web).
+        if (in_array($status, [FiscalDocument::STATUS_QUEUED, FiscalDocument::STATUS_PENDING], true)) {
+            $doc->setQueuedAt(new \DateTimeImmutable($updated ?? 'now'));
+        }
         if ($nextRetry !== null) {
-            $doc->setNextRetryAt(new \DateTimeImmutable($nextRetry));
+            $doc->setNextRetryAt(new \DateTimeImmutable($nextRetry, $cli));
         }
 
         return $doc;

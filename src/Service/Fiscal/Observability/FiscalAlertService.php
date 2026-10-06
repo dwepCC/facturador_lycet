@@ -265,7 +265,8 @@ class FiscalAlertService
 
     private function detectRetryAnomalies(): int
     {
-        $since = new \DateTimeImmutable('-24 hours');
+        // fiscal_audit_logs lo escribe el worker: la ventana de 24 h va en su reloj (ver FiscalClock).
+        $since = \App\Service\Fiscal\FiscalClock::cliNow(new \DateTimeImmutable('-24 hours'));
         $conn = $this->em->getConnection();
         $rows = $conn->fetchAllAssociative(
             'SELECT tenant_slug, COUNT(*) AS retries FROM fiscal_audit_logs WHERE status = :st AND created_at >= :since AND tenant_slug IS NOT NULL GROUP BY tenant_slug HAVING retries >= :min',

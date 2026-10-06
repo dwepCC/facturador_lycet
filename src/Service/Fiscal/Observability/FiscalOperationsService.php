@@ -9,6 +9,7 @@ use App\Entity\FiscalDocument;
 use App\Repository\EmpresaRepository;
 use App\Repository\FiscalAuditLogRepository;
 use App\Repository\FiscalDocumentRepository;
+use App\Service\Fiscal\FiscalClock;
 use App\Service\Fiscal\FiscalDocumentDetailService;
 use App\Service\Fiscal\FiscalQueueService;
 use App\Service\Fiscal\Provider\PseResponseFormatter;
@@ -53,9 +54,9 @@ class FiscalOperationsService
         // La detección escribe en BD: como mucho una vez por minuto, no en cada consulta del panel.
         $this->alertService->runDetectionThrottled(60);
 
-        // "Hoy" = día calendario de Perú (los datos se guardan en UTC), no la medianoche del servidor.
-        $today = (new \DateTimeImmutable('today midnight', new \DateTimeZone('America/Lima')))
-            ->setTimezone(new \DateTimeZone('UTC'));
+        // "Hoy" = día calendario de Perú. fiscal_audit_logs lo escribe el worker (hora de Berlín, ver
+        // FiscalClock), así que la medianoche de Lima se expresa en ESE reloj para compararla en SQL.
+        $today = FiscalClock::limaMidnightIn(FiscalClock::cliTimezone());
         // Fase 5: solo se leen 'documents_today'/'pending' de este resultado — includeTenants
         // false evita calcular y descartar countByTenant() en cada poll de 30s (ver
         // FiscalDocumentDetailService::globalStats()).
@@ -91,11 +92,29 @@ class FiscalOperationsService
                 'open_alerts' => $this->alertService->countOpen(),
             ],
             'charts' => [
-                'emissions_by_hour' => $this->auditLogs->emissionsByHourSince($today),
+                'emissions_by_hour' => $this->limaHourLabels($this->auditLogs->emissionsByHourSince($today)),
                 'errors_by_provider' => $this->auditLogs->errorsByProviderSince($today),
                 'avg_duration_by_provider' => $this->avgDurationByProvider($today),
             ],
         ];
+    }
+
+    /**
+     * Las horas de la gráfica salen agrupadas en el reloj del worker; se muestran en hora de Lima.
+     *
+     * @param array<int, array<string, mixed>> $rows
+     * @return array<int, array<string, mixed>>
+     */
+    private function limaHourLabels(array $rows): array
+    {
+        foreach ($rows as &$row) {
+            if (isset($row['hour_bucket'])) {
+                $row['hour_bucket'] = FiscalClock::cliWallToLima((string) $row['hour_bucket'], 'Y-m-d H:00');
+            }
+        }
+        unset($row);
+
+        return $rows;
     }
 
     private const GROUP_STATUSES = [
@@ -404,12 +423,13 @@ class FiscalOperationsService
             'pse_message' => $pseMessage,
             'pse_response' => $pseSummary,
             'display_message' => $displayMessage,
-            'queued_at' => $doc->getQueuedAt() ? $doc->getQueuedAt()->format(DATE_ATOM) : null,
-            'next_retry_at' => $doc->getNextRetryAt() ? $doc->getNextRetryAt()->format(DATE_ATOM) : null,
-            'created_at' => $doc->getCreatedAt()->format(DATE_ATOM),
-            'updated_at' => $doc->getUpdatedAt()->format(DATE_ATOM),
-            // Tiempo sin avanzar y si ya se considera atascado (normal vs. algo que mirar).
-            'age_seconds' => max(0, time() - $doc->getUpdatedAt()->getTimestamp()),
+            // Todas las fechas salen en hora de Lima, cada una leída con el reloj de su escritor.
+            'queued_at' => FiscalClock::webToLimaIso($doc->getQueuedAt()),
+            'next_retry_at' => FiscalClock::cliToLimaIso($doc->getNextRetryAt()),
+            'created_at' => FiscalClock::webToLimaIso($doc->getCreatedAt()),
+            // Desde cuándo está en su estado actual, cuánto lleva y si ya se considera atascado.
+            'updated_at' => ($since = FiscalDocumentRepository::stateSince($doc)) ? $since->setTimezone(FiscalClock::lima())->format(DATE_ATOM) : null,
+            'age_seconds' => ($since ?? null) ? max(0, time() - $since->getTimestamp()) : null,
             'stuck' => FiscalDocumentRepository::isStuck($doc),
         ];
     }

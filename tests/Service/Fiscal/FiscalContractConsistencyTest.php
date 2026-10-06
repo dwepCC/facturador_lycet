@@ -161,7 +161,8 @@ class FiscalContractConsistencyTest extends TestCase
         $detail = $this->serializeViaDetail($doc);
         $queue = $this->serializeViaQueue($doc);
 
-        $expected = $doc->getNextRetryAt()->format(DATE_ATOM);
+        // Mismo formato (hora de Lima) en lista, detalle y cola.
+        $expected = \App\Service\Fiscal\FiscalClock::cliToLimaIso($doc->getNextRetryAt());
         self::assertSame($expected, $list['next_retry_at']);
         self::assertSame($expected, $detail['next_retry_at']);
         self::assertSame($expected, $queue['next_retry_at']);
@@ -219,7 +220,7 @@ class FiscalContractConsistencyTest extends TestCase
         self::assertSame($list['attended'], $queue['attended']);
         self::assertSame('cliente resolvió por WhatsApp', $detail['attended_reason']);
         self::assertSame('admin@tukifac.com', $detail['attended_by']);
-        self::assertSame($doc->getAttendedAt()->format(DATE_ATOM), $detail['attended_at']);
+        self::assertSame(\App\Service\Fiscal\FiscalClock::webToLimaIso($doc->getAttendedAt()), $detail['attended_at']);
     }
 
     public function testListNeverOmitsAttendedFields(): void

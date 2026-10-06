@@ -163,7 +163,9 @@ class FiscalControllerSerializeDocSummaryTest extends TestCase
         $doc = $this->makeDocument(FiscalDocument::ERROR_TRANSIENT, true, 2, $when);
         $result = $this->serialize($doc);
 
-        self::assertSame($when->format(DATE_ATOM), $result['next_retry_at']);
+        // next_retry_at lo escribe el worker: se lee con su reloj y se muestra en hora de Lima (ver FiscalClock).
+        self::assertSame(\App\Service\Fiscal\FiscalClock::cliToLimaIso($when), $result['next_retry_at']);
+        self::assertStringEndsWith('-05:00', $result['next_retry_at']);
 
         $docNoRetry = $this->makeDocument(FiscalDocument::ERROR_BUSINESS, false, 1);
         $resultNoRetry = $this->serialize($docNoRetry);

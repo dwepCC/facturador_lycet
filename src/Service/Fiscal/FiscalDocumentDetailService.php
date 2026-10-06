@@ -171,11 +171,12 @@ class FiscalDocumentDetailService
             'greenter_version' => $doc->getGreenterVersion(),
             'provider_version' => $doc->getProviderVersion(),
             'customer_email' => $doc->getCustomerEmail(),
-            'queued_at' => $this->fmt($doc->getQueuedAt()),
-            'sent_at' => $this->fmt($doc->getSentAt()),
-            'accepted_at' => $this->fmt($doc->getAcceptedAt()),
-            'rejected_at' => $this->fmt($doc->getRejectedAt()),
-            'next_retry_at' => $this->fmt($doc->getNextRetryAt()),
+            // Hora de Lima; queued_at lo escribe la web y el resto el worker (ver FiscalClock).
+            'queued_at' => FiscalClock::webToLimaIso($doc->getQueuedAt()),
+            'sent_at' => FiscalClock::cliToLimaIso($doc->getSentAt()),
+            'accepted_at' => FiscalClock::cliToLimaIso($doc->getAcceptedAt()),
+            'rejected_at' => FiscalClock::cliToLimaIso($doc->getRejectedAt()),
+            'next_retry_at' => FiscalClock::cliToLimaIso($doc->getNextRetryAt()),
             'xml_url' => $doc->getXmlUrl(),
             'xml_signed_url' => $doc->getXmlSignedUrl(),
             'unsigned_xml_url' => $doc->getUnsignedXmlUrl(),
@@ -198,8 +199,8 @@ class FiscalDocumentDetailService
             'attended' => $doc->isAttended(),
             'attended_reason' => $doc->getAttendedReason(),
             'attended_by' => $doc->getAttendedBy(),
-            'attended_at' => $this->fmt($doc->getAttendedAt()),
-            'created_at' => $doc->getCreatedAt()->format(DATE_ATOM),
+            'attended_at' => FiscalClock::webToLimaIso($doc->getAttendedAt()),
+            'created_at' => FiscalClock::webToLimaIso($doc->getCreatedAt()),
             'updated_at' => $doc->getUpdatedAt()->format(DATE_ATOM),
         ];
     }
@@ -230,10 +231,11 @@ class FiscalDocumentDetailService
             ], $meta);
         };
 
-        $push($events, 'created', $doc->getCreatedAt());
-        $push($events, 'queued', $doc->getQueuedAt());
-        $push($events, 'sent', $doc->getSentAt(), ['ticket' => $doc->getTicket()]);
-        $push($events, 'accepted', $doc->getAcceptedAt(), ['sunat_code' => $doc->getSunatCode()]);
+        // Cada marca se lee con el reloj de su escritor (web: created/queued; worker: el resto).
+        $push($events, 'created', FiscalClock::fromWeb($doc->getCreatedAt()));
+        $push($events, 'queued', FiscalClock::fromWeb($doc->getQueuedAt()));
+        $push($events, 'sent', FiscalClock::fromCli($doc->getSentAt()), ['ticket' => $doc->getTicket()]);
+        $push($events, 'accepted', FiscalClock::fromCli($doc->getAcceptedAt()), ['sunat_code' => $doc->getSunatCode()]);
         $push($events, 'rejected', $doc->getRejectedAt(), [
             'sunat_code' => $doc->getSunatCode(),
             'sunat_message' => $doc->getSunatMessage(),

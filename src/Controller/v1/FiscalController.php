@@ -656,7 +656,7 @@ class FiscalController extends AbstractController
                 'error' => 'Este documento ya fue marcado como atendido — no admite ninguna acción.',
                 'hint' => 'Quitar "atendido" primero si de verdad hace falta actuar de nuevo.',
                 'attended_reason' => $doc->getAttendedReason(),
-                'attended_at' => $doc->getAttendedAt()?->format(\DateTimeInterface::ATOM),
+                'attended_at' => \App\Service\Fiscal\FiscalClock::webToLimaIso($doc->getAttendedAt()),
             ], Response::HTTP_CONFLICT);
         }
 
@@ -935,7 +935,7 @@ class FiscalController extends AbstractController
             'attended' => $doc->isAttended(),
             'attended_reason' => $doc->getAttendedReason(),
             'attended_by' => $doc->getAttendedBy(),
-            'attended_at' => $doc->getAttendedAt() ? $doc->getAttendedAt()->format(DATE_ATOM) : null,
+            'attended_at' => \App\Service\Fiscal\FiscalClock::webToLimaIso($doc->getAttendedAt()),
             'customer_name' => $customerName,
             'company_ruc' => $companyRuc,
             'company_name' => $companyName,
@@ -953,9 +953,10 @@ class FiscalController extends AbstractController
             // está guardado.
             'error_type' => $doc->getErrorType(),
             'retryable' => $doc->isRetryable(),
-            'next_retry_at' => $doc->getNextRetryAt() ? $doc->getNextRetryAt()->format(DATE_ATOM) : null,
-            'created_at' => $doc->getCreatedAt()->format(DATE_ATOM),
-            'accepted_at' => $doc->getAcceptedAt() ? $doc->getAcceptedAt()->format(DATE_ATOM) : null,
+            // Hora de Lima; created_at lo escribe la web y el resto el worker (ver FiscalClock).
+            'next_retry_at' => \App\Service\Fiscal\FiscalClock::cliToLimaIso($doc->getNextRetryAt()),
+            'created_at' => \App\Service\Fiscal\FiscalClock::webToLimaIso($doc->getCreatedAt()),
+            'accepted_at' => \App\Service\Fiscal\FiscalClock::cliToLimaIso($doc->getAcceptedAt()),
         ];
     }
 }
