@@ -202,12 +202,18 @@ class FiscalController extends AbstractController
             }
         }
 
-        return new JsonResponse($this->detailService->globalStats(
+        $stats = $this->detailService->globalStats(
             $tenantSlug,
             $this->parseDateFilter($fromStr, false),
             $this->parseDateFilter($toStr, true),
             $tenantId !== null && $tenantId !== '' ? (int) $tenantId : null
-        ));
+        );
+        // Conteo por pestaña respetando TODOS los filtros de la tabla (tipo, serie, cliente...).
+        $viewFilters = $this->parseFilters($request);
+        $viewFilters['tenant_slug'] = $tenantSlug;
+        $stats['views'] = $this->repo->countViews($viewFilters);
+
+        return new JsonResponse($stats);
     }
 
     /**
@@ -736,6 +742,7 @@ class FiscalController extends AbstractController
             'email_sent' => $request->query->has('email_sent') ? $request->query->get('email_sent') : null,
             'electronic_only' => !filter_var($request->query->get('include_non_fiscal', false), FILTER_VALIDATE_BOOLEAN),
             // "Atendido": filtro aparte de status/group (ver comentario en createFilteredQuery).
+            'view' => in_array($this->q($request, 'view'), FiscalDocumentRepository::VIEWS, true) ? $this->q($request, 'view') : null,
             'attended_only' => filter_var($request->query->get('attended_only', false), FILTER_VALIDATE_BOOLEAN),
             'unattended_only' => filter_var($request->query->get('unattended_only', false), FILTER_VALIDATE_BOOLEAN),
         ];
@@ -750,7 +757,7 @@ class FiscalController extends AbstractController
         $out = [];
         foreach ([
             'tenant_slug', 'status', 'document_type', 'provider', 'send_mode',
-            'series', 'number', 'customer_email', 'customer_name', 'company_ruc',
+            'series', 'number', 'customer_email', 'customer_name', 'company_ruc', 'group', 'view',
         ] as $key) {
             if (!empty($raw[$key])) {
                 $out[$key] = (string) $raw[$key];
@@ -765,7 +772,7 @@ class FiscalController extends AbstractController
         if (!empty($raw['to'])) {
             $out['to'] = $this->parseDateFilter($raw['to'], true);
         }
-        foreach (['errors_only', 'pending_only', 'retry_only', 'email_pending'] as $flag) {
+        foreach (['errors_only', 'pending_only', 'retry_only', 'email_pending', 'attended_only', 'unattended_only'] as $flag) {
             if (!empty($raw[$flag])) {
                 $out[$flag] = filter_var($raw[$flag], FILTER_VALIDATE_BOOLEAN);
             }

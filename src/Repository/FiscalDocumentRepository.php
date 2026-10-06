@@ -121,12 +121,15 @@ class FiscalDocumentRepository extends ServiceEntityRepository
     /**
      * @return array<string, int>
      */
-    public function countByStatus(?string $tenantSlug = null, ?\DateTimeInterface $from = null, ?\DateTimeInterface $to = null): array
+    public function countByStatus(?string $tenantSlug = null, ?\DateTimeInterface $from = null, ?\DateTimeInterface $to = null, bool $excludeAttended = false): array
     {
         $qb = $this->createQueryBuilder('d')
             ->select('d.status AS status, COUNT(d.id) AS cnt')
             ->groupBy('d.status');
         $this->applyElectronicOnly($qb, true);
+        if ($excludeAttended) {
+            $qb->andWhere('d.attended = false');
+        }
         if ($tenantSlug !== null && $tenantSlug !== '') {
             $qb->andWhere('d.tenantSlug = :slug')->setParameter('slug', $tenantSlug);
         }
@@ -154,22 +157,12 @@ class FiscalDocumentRepository extends ServiceEntityRepository
      */
     public function countUnattendedNeedingAction(?string $tenantSlug = null): int
     {
-        $qb = $this->createQueryBuilder('d')
-            ->select('COUNT(d.id)')
-            ->andWhere('d.status IN (:st)')
-            ->andWhere('d.attended = false')
-            ->setParameter('st', [
-                FiscalDocument::STATUS_ERROR,
-                FiscalDocument::STATUS_REJECTED,
-                FiscalDocument::STATUS_OBSERVED,
-                FiscalDocument::STATUS_CANCELLED,
-            ]);
-        $this->applyElectronicOnly($qb, true);
+        $filters = ['view' => 'needs_action'];
         if ($tenantSlug !== null && $tenantSlug !== '') {
-            $qb->andWhere('d.tenantSlug = :slug')->setParameter('slug', $tenantSlug);
+            $filters['tenant_slug'] = $tenantSlug;
         }
 
-        return (int) $qb->getQuery()->getSingleScalarResult();
+        return $this->countByFilters($filters);
     }
 
     /**
@@ -293,6 +286,9 @@ class FiscalDocumentRepository extends ServiceEntityRepository
                     break;
             }
         }
+        if (!empty($filters['view'])) {
+            $this->applyView($qb, (string) $filters['view']);
+        }
         if (!empty($filters['document_type'])) {
             $qb->andWhere('d.documentType = :type')->setParameter('type', (string) $filters['document_type']);
         }
@@ -328,7 +324,7 @@ class FiscalDocumentRepository extends ServiceEntityRepository
             if ($sent) {
                 $qb->andWhere('d.emailStatus = :esSent')->setParameter('esSent', 'sent');
             } else {
-                $qb->andWhere('d.emailStatus IS NULL OR d.emailStatus != :esSent')
+                $qb->andWhere('(d.emailStatus IS NULL OR d.emailStatus != :esSent)')
                     ->setParameter('esSent', 'sent');
             }
         }
@@ -348,7 +344,7 @@ class FiscalDocumentRepository extends ServiceEntityRepository
             $qb->andWhere('d.status IN (:retry)')->setParameter('retry', ['retrying', 'error']);
         }
         if (!empty($filters['email_pending'])) {
-            $qb->andWhere('d.emailStatus IN (:em) OR (d.emailStatus IS NULL AND d.status = :acc)')
+            $qb->andWhere('(d.emailStatus IN (:em) OR (d.emailStatus IS NULL AND d.status = :acc))')
                 ->setParameter('em', ['pending', 'failed'])
                 ->setParameter('acc', FiscalDocument::STATUS_ACCEPTED);
         }
@@ -363,6 +359,70 @@ class FiscalDocumentRepository extends ServiceEntityRepository
         }
 
         return $qb;
+    }
+
+    /**
+     * Vistas de trabajo (pestañas del panel). "needs_action" y "attended" son disjuntas a propósito:
+     * un documento atendido NUNCA cuenta como pendiente de acción.
+     *
+     * @var string[]
+     */
+    public const VIEWS = ['pending', 'needs_action', 'processing', 'history', 'accepted', 'attended', 'all'];
+
+    /**
+     * "Requiere acción": status terminal con problema (rechazado/anulado o error NO
+     * transitorio — un error transitorio se reintenta solo, ver group=processing) y sin atender.
+     */
+    private const NEEDS_ACTION_DQL = "d.attended = false AND (d.status IN ('rejected','cancelled') OR (d.status = 'error' AND (d.errorType IS NULL OR d.errorType <> 'transient')))";
+
+    private function applyView(QueryBuilder $qb, string $view): void
+    {
+        switch ($view) {
+            case 'pending': // todo lo que falta gestionar o vigilar: requiere acción + en proceso
+                $qb->andWhere('((' . self::NEEDS_ACTION_DQL . ") OR d.status IN (:vpend) OR (d.status = 'error' AND d.errorType = 'transient'))")
+                    ->setParameter('vpend', ['pending', 'queued', 'sending', 'sent', 'retrying']);
+                break;
+            case 'needs_action':
+                $qb->andWhere('(' . self::NEEDS_ACTION_DQL . ')');
+                break;
+            case 'processing':
+                $qb->andWhere("(d.status IN (:vproc) OR (d.status = 'error' AND d.errorType = 'transient'))")
+                    ->setParameter('vproc', ['pending', 'queued', 'sending', 'sent', 'retrying']);
+                break;
+            case 'accepted':
+                // SUNAT ya lo aceptó (con o sin observaciones): no hay nada más que gestionar.
+                $qb->andWhere('d.status IN (:vacc)')
+                    ->setParameter('vacc', [FiscalDocument::STATUS_ACCEPTED, FiscalDocument::STATUS_OBSERVED]);
+                break;
+            case 'attended':
+                $qb->andWhere('d.attended = true');
+                break;
+            case 'history': // nada más que gestionar: aceptado por SUNAT (con o sin observaciones) o atendido
+                $qb->andWhere('(d.status IN (:vhist) OR d.attended = true)')
+                    ->setParameter('vhist', [FiscalDocument::STATUS_ACCEPTED, FiscalDocument::STATUS_OBSERVED]);
+                break;
+        }
+    }
+
+    /**
+     * Conteo por vista respetando TODOS los demás filtros (menos la propia vista).
+     *
+     * @param array<string, mixed> $filters
+     * @return array<string, int>
+     */
+    public function countViews(array $filters): array
+    {
+        unset($filters['view'], $filters['cursor'], $filters['limit'], $filters['offset']);
+        $out = [];
+        foreach (self::VIEWS as $view) {
+            $f = $filters;
+            if ($view !== 'all') {
+                $f['view'] = $view;
+            }
+            $out[$view] = $this->countByFilters($f);
+        }
+
+        return $out;
     }
 
     private function applyElectronicOnly(QueryBuilder $qb, bool $enabled): void

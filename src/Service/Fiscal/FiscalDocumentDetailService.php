@@ -92,15 +92,20 @@ class FiscalDocumentDetailService
         ?int $tenantId = null,
         bool $includeTenants = true
     ): array {
-        $counts = $this->documents->countByStatus($tenantSlug, $from, $to);
-        $total = array_sum($counts);
+        $allCounts = $this->documents->countByStatus($tenantSlug, $from, $to);
+        // Un documento atendido ya no es trabajo pendiente: errores/rechazos/observados abiertos
+        // se cuentan SIN atendidos; by_status y total conservan el conteo técnico completo.
+        $counts = $this->documents->countByStatus($tenantSlug, $from, $to, true);
+        $total = array_sum($allCounts);
         $errors = ($counts['error'] ?? 0) + ($counts['rejected'] ?? 0);
         $pending = ($counts['pending'] ?? 0) + ($counts['queued'] ?? 0);
         $processing = ($counts['sending'] ?? 0) + ($counts['retrying'] ?? 0);
         $sent = $counts['sent'] ?? 0;
         $accepted = $counts['accepted'] ?? 0;
 
-        $todayFrom = new \DateTimeImmutable('today midnight');
+        // "Hoy" = día calendario en Perú (created_at se guarda en UTC), no la medianoche del servidor.
+        $todayFrom = (new \DateTimeImmutable('today midnight', new \DateTimeZone('America/Lima')))
+            ->setTimezone(new \DateTimeZone('UTC'));
         $todayFilters = [
             'from' => $todayFrom,
             'electronic_only' => true,
@@ -124,7 +129,11 @@ class FiscalDocumentDetailService
             'errors' => $errors,
             'retries' => $counts['retrying'] ?? 0,
             'emails_pending' => $this->emails->countPending($tenantSlug),
-            'by_status' => $counts,
+            'observed' => $counts['observed'] ?? 0,
+            'cancelled' => $counts['cancelled'] ?? 0,
+            'attended' => ($allCounts['error'] ?? 0) + ($allCounts['rejected'] ?? 0) + ($allCounts['observed'] ?? 0) + ($allCounts['cancelled'] ?? 0)
+                - ($counts['error'] ?? 0) - ($counts['rejected'] ?? 0) - ($counts['observed'] ?? 0) - ($counts['cancelled'] ?? 0),
+            'by_status' => $allCounts,
             // Fase 5 (performance): FiscalOperationsService::summary() llama a globalStats()
             // solo por 'documents_today'/'pending' y descartaba 'tenants' sin usarlo — un
             // GROUP BY sin rango de fecha sobre toda fiscal_documents (~125ms medidos con
