@@ -90,12 +90,13 @@ class FiscalDocumentDetailService
         ?\DateTimeInterface $from = null,
         ?\DateTimeInterface $to = null,
         ?int $tenantId = null,
-        bool $includeTenants = true
+        bool $includeTenants = true,
+        bool $excludeDemo = false
     ): array {
-        $allCounts = $this->documents->countByStatus($tenantSlug, $from, $to);
+        $allCounts = $this->documents->countByStatus($tenantSlug, $from, $to, false, $excludeDemo);
         // Un documento atendido ya no es trabajo pendiente: errores/rechazos/observados abiertos
         // se cuentan SIN atendidos; by_status y total conservan el conteo técnico completo.
-        $counts = $this->documents->countByStatus($tenantSlug, $from, $to, true);
+        $counts = $this->documents->countByStatus($tenantSlug, $from, $to, true, $excludeDemo);
         $total = array_sum($allCounts);
         $errors = ($counts['error'] ?? 0) + ($counts['rejected'] ?? 0);
         $pending = ($counts['pending'] ?? 0) + ($counts['queued'] ?? 0);
@@ -109,6 +110,7 @@ class FiscalDocumentDetailService
         $todayFilters = [
             'from' => $todayFrom,
             'electronic_only' => true,
+            'exclude_demo' => $excludeDemo,
         ];
         if ($tenantSlug !== null && $tenantSlug !== '') {
             $todayFilters['tenant_slug'] = $tenantSlug;
@@ -142,7 +144,7 @@ class FiscalDocumentDetailService
             // caller que SÍ expone 'tenants' en su contrato (FiscalController::stats(), ver
             // FiscalStats.tenants en frontend_central) sigue usando el default true, sin
             // ningún cambio de comportamiento.
-            'tenants' => $includeTenants ? $this->documents->countByTenant($tenantSlug) : [],
+            'tenants' => $includeTenants ? $this->documents->countByTenant($tenantSlug, 50, $excludeDemo) : [],
         ];
     }
 

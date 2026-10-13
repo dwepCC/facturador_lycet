@@ -206,7 +206,9 @@ class FiscalController extends AbstractController
             $tenantSlug,
             $this->parseDateFilter($fromStr, false),
             $this->parseDateFilter($toStr, true),
-            $tenantId !== null && $tenantId !== '' ? (int) $tenantId : null
+            $tenantId !== null && $tenantId !== '' ? (int) $tenantId : null,
+            true,
+            filter_var($request->query->get('exclude_demo', false), FILTER_VALIDATE_BOOLEAN)
         );
         // Conteo por pestaña respetando TODOS los filtros de la tabla (tipo, serie, cliente...).
         $viewFilters = $this->parseFilters($request);
@@ -253,13 +255,15 @@ class FiscalController extends AbstractController
             'counts' => $this->repo->countByStatus(
                 $filters['tenant_slug'],
                 $filters['from'] ?? null,
-                $filters['to'] ?? null
+                $filters['to'] ?? null,
+                false,
+                !empty($filters['exclude_demo'])
             ),
             // Aparte de `counts` (por status técnico) — cuántos documentos en un estado que
             // requiere decisión siguen SIN atender. No filtra por from/to a propósito: es un
             // pendiente real de trabajo, no algo que deba desaparecer por el rango de fechas
             // que se esté mirando en la tabla.
-            'unattended_needing_action' => $this->repo->countUnattendedNeedingAction($filters['tenant_slug']),
+            'unattended_needing_action' => $this->repo->countUnattendedNeedingAction($filters['tenant_slug'], !empty($filters['exclude_demo'])),
         ];
 
         if ($useCursor) {
@@ -745,6 +749,9 @@ class FiscalController extends AbstractController
             'view' => in_array($this->q($request, 'view'), FiscalDocumentRepository::VIEWS, true) ? $this->q($request, 'view') : null,
             'attended_only' => filter_var($request->query->get('attended_only', false), FILTER_VALIDATE_BOOLEAN),
             'unattended_only' => filter_var($request->query->get('unattended_only', false), FILTER_VALIDATE_BOOLEAN),
+            // Oculta los documentos de ambiente demo (SUNAT beta). Por defecto NO se oculta: es el
+            // dashboard quien lo pide, para no cambiar lo que ven otros consumidores de esta API.
+            'exclude_demo' => filter_var($request->query->get('exclude_demo', false), FILTER_VALIDATE_BOOLEAN),
         ];
     }
 
@@ -772,7 +779,7 @@ class FiscalController extends AbstractController
         if (!empty($raw['to'])) {
             $out['to'] = $this->parseDateFilter($raw['to'], true);
         }
-        foreach (['errors_only', 'pending_only', 'retry_only', 'email_pending', 'attended_only', 'unattended_only'] as $flag) {
+        foreach (['errors_only', 'pending_only', 'retry_only', 'email_pending', 'attended_only', 'unattended_only', 'exclude_demo'] as $flag) {
             if (!empty($raw[$flag])) {
                 $out[$flag] = filter_var($raw[$flag], FILTER_VALIDATE_BOOLEAN);
             }

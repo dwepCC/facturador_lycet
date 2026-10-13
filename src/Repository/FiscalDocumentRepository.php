@@ -122,12 +122,13 @@ class FiscalDocumentRepository extends ServiceEntityRepository
     /**
      * @return array<string, int>
      */
-    public function countByStatus(?string $tenantSlug = null, ?\DateTimeInterface $from = null, ?\DateTimeInterface $to = null, bool $excludeAttended = false): array
+    public function countByStatus(?string $tenantSlug = null, ?\DateTimeInterface $from = null, ?\DateTimeInterface $to = null, bool $excludeAttended = false, bool $excludeDemo = false): array
     {
         $qb = $this->createQueryBuilder('d')
             ->select('d.status AS status, COUNT(d.id) AS cnt')
             ->groupBy('d.status');
         $this->applyElectronicOnly($qb, true);
+        $this->applyExcludeDemo($qb, $excludeDemo);
         if ($excludeAttended) {
             $qb->andWhere('d.attended = false');
         }
@@ -156,9 +157,9 @@ class FiscalDocumentRepository extends ServiceEntityRepository
      * TODAVÍA no fueron atendidos. KPI separado a propósito de countByStatus(): ese cuenta por
      * status técnico sin importar si ya se revisó; este es "lo que de verdad falta mirar".
      */
-    public function countUnattendedNeedingAction(?string $tenantSlug = null): int
+    public function countUnattendedNeedingAction(?string $tenantSlug = null, bool $excludeDemo = false): int
     {
-        $filters = ['view' => 'needs_action'];
+        $filters = ['view' => 'needs_action', 'exclude_demo' => $excludeDemo];
         if ($tenantSlug !== null && $tenantSlug !== '') {
             $filters['tenant_slug'] = $tenantSlug;
         }
@@ -169,7 +170,7 @@ class FiscalDocumentRepository extends ServiceEntityRepository
     /**
      * @return array<int, array{tenant_slug: string, total: int}>
      */
-    public function countByTenant(?string $tenantSlug = null, int $limit = 50): array
+    public function countByTenant(?string $tenantSlug = null, int $limit = 50, bool $excludeDemo = false): array
     {
         $qb = $this->createQueryBuilder('d')
             ->select('d.tenantSlug AS tenant_slug, COUNT(d.id) AS total')
@@ -177,6 +178,7 @@ class FiscalDocumentRepository extends ServiceEntityRepository
             ->orderBy('total', 'DESC')
             ->setMaxResults(min(200, max(1, $limit)));
         $this->applyElectronicOnly($qb, true);
+        $this->applyExcludeDemo($qb, $excludeDemo);
         if ($tenantSlug !== null && $tenantSlug !== '') {
             $qb->andWhere('d.tenantSlug = :slug')->setParameter('slug', $tenantSlug);
         }
@@ -348,6 +350,7 @@ class FiscalDocumentRepository extends ServiceEntityRepository
         $qb = $this->createQueryBuilder('d');
         $electronicOnly = !isset($filters['electronic_only']) || $filters['electronic_only'] !== false;
         $this->applyElectronicOnly($qb, $electronicOnly);
+        $this->applyExcludeDemo($qb, !empty($filters['exclude_demo']));
 
         if (!empty($filters['tenant_slug'])) {
             $qb->andWhere('d.tenantSlug = :slug')->setParameter('slug', (string) $filters['tenant_slug']);
@@ -522,6 +525,20 @@ class FiscalDocumentRepository extends ServiceEntityRepository
         }
 
         return $out;
+    }
+
+    /**
+     * Documentos de ambiente demo = enviados contra SUNAT beta (sunatMode 'beta', el de la empresa en
+     * pruebas). Un documento todavía sin ambiente (nunca llegó a enviarse) NO se oculta: puede ser trabajo
+     * pendiente. Es el ambiente ACTUAL del documento: uno emitido en beta y reemitido en producción ya
+     * cuenta como producción (ver FiscalDocument::$originalSunatMode).
+     */
+    private function applyExcludeDemo(QueryBuilder $qb, bool $enabled): void
+    {
+        if (!$enabled) {
+            return;
+        }
+        $qb->andWhere('(d.sunatMode IS NULL OR d.sunatMode <> :demoMode)')->setParameter('demoMode', 'beta');
     }
 
     private function applyElectronicOnly(QueryBuilder $qb, bool $enabled): void

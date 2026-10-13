@@ -47,7 +47,13 @@
       </select>
       <select id="send_mode"><option value="">Modo</option><option>sunat_direct</option><option>pse</option></select>
       <input id="provider" placeholder="Proveedor">
+      <select id="attention" title="Atención: si el comprobante ya fue revisado y marcado como atendido">
+        <option value="">Atención</option>
+        <option value="unattended">Sin atender</option>
+        <option value="attended">Atendidos</option>
+      </select>
       <label><input type="checkbox" id="errors_only"> Solo errores</label>
+      <label title="Por defecto se ocultan los comprobantes de empresas en ambiente demo (SUNAT beta)"><input type="checkbox" id="include_demo"> Incluir demo</label>
       <button class="btn btn-indigo" id="btnLoad">Filtrar</button>
       <button class="btn btn-slate" id="btnRefresh">Actualizar</button>
     </div>
@@ -66,6 +72,7 @@
               <th>Ambiente envío</th>
               <th>Documento</th>
               <th>Estado</th>
+              <th>Atención</th>
               <th>Modo</th>
               <th>Proveedor</th>
               <th>Acciones</th>
@@ -301,6 +308,21 @@
       return `<span class="${cls}">${escapeHtml(currentText)}</span>`;
     }
 
+    // "Atendido" = decisión administrativa de que un comprobante con problema ya fue revisado. Solo
+    // aplica a los estados que la admiten (error no transitorio, rechazado, observado, anulado): en el
+    // resto no hay nada que atender y se muestra un guion.
+    function attentionCell(d){
+      if(d.attended){
+        const who=[d.attended_by, d.attended_at?formatDate(d.attended_at):''].filter(Boolean).join(' · ');
+        const tip=[who, d.attended_reason].filter(Boolean).join(' — ');
+        return `<span class="badge badge-ok" title="${escapeHtml(tip)}">Atendido ✓</span>`;
+      }
+      const st=String(d.status||'').toLowerCase();
+      const et=String(d.error_type||'').toLowerCase();
+      const needs=st==='rejected'||st==='observed'||st==='cancelled'||(st==='error'&&et!=='transient');
+      return needs?'<span class="badge badge-warn">Sin atender</span>':'<span class="cell-sub">—</span>';
+    }
+
     function documentText(type, series, number){
       const code=String(type||'').toUpperCase();
       const label=documentTypeLabel[code] || `DOC ${code || '—'}`;
@@ -352,12 +374,16 @@
         from: qs('from').value,
         to: qs('to').value,
         errors_only: qs('errors_only').checked,
+        attended_only: qs('attention').value==='attended',
+        unattended_only: qs('attention').value==='unattended',
+        // Por defecto el dashboard oculta los documentos de ambiente demo (SUNAT beta).
+        exclude_demo: !qs('include_demo').checked,
       };
     }
 
     async function loadStats(){
       const f=currentFilters();
-      const s=await apiFetch(url('/stats',{from:f.from,to:f.to,company_ruc:f.company_ruc})).then(r=>r.json());
+      const s=await apiFetch(url('/stats',{from:f.from,to:f.to,company_ruc:f.company_ruc,exclude_demo:f.exclude_demo})).then(r=>r.json());
       const items=[
         ['Total',s.total,'indigo'],['Pendientes',s.pending,'amber'],['Cola',s.in_queue,'sky'],
         ['Procesando',s.processing,'violet'],['Aceptados',s.accepted,'emerald'],
@@ -391,6 +417,7 @@
             ${d.tenant_sync_state==='skipped'?'<span class="badge" title="Tenant no actualizado por decisión manual">Tenant ✗</span>':''}
             ${d.sunat_code?`<div class="cell-sub cell-sub--err" title="${escapeHtml(d.sunat_message||'')}">SUNAT ${escapeHtml(d.sunat_code)}</div>`:''}
           </td>
+          <td>${attentionCell(d)}</td>
           <td>${d.send_mode||'—'}</td>
           <td>${d.provider||'—'}</td>
           <td><button class="btn btn-indigo btn-xs" type="button" data-open="${d.document_uuid}">Ver detalle</button></td>
