@@ -7,7 +7,7 @@ namespace App\Service\Fiscal\Provider;
 use App\Entity\Empresa;
 use App\Entity\FiscalDocument;
 use App\Service\Fiscal\CdrNormalizer;
-use Greenter\Factory\XmlBuilderResolver;
+use App\Xml\TukifacXmlBuilderResolver;
 use Greenter\Model\DocumentInterface;
 use Greenter\Ws\Reader\DomCdrReader;
 use Greenter\Ws\Reader\XmlReader;
@@ -356,7 +356,7 @@ class ValidaPseProvider extends AbstractFiscalProvider
 
     private function buildUnsignedXml(string $documentClass, DocumentInterface $greenterDoc): string
     {
-        $builder = (new XmlBuilderResolver(['autoescape' => false]))->find($documentClass);
+        $builder = (new TukifacXmlBuilderResolver(['autoescape' => false]))->find($documentClass);
         $xml = $builder->build($greenterDoc);
         if (!is_string($xml) || trim($xml) === '') {
             throw new \RuntimeException('No se pudo generar XML UBL del comprobante');

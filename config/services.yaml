@@ -105,6 +105,7 @@ services:
         public: true
 
     Greenter\See:
+        class: App\Xml\TukifacSee
         public: true
         calls:
             - [setCachePath, ['%kernel.cache_dir%']]
