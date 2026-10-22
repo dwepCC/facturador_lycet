@@ -117,6 +117,8 @@ class NubefactGreProvider extends AbstractFiscalProvider
         }
         $ruc = trim((string) $greenterDoc->getCompany()->getRuc());
         $isProd = strtolower(trim($empresa->getAmbiente())) === 'produccion';
+        $swapped = false;
+        $sandboxRuc = null;
         try {
             if (!$isProd) {
                 // Sandbox NubeFact: el RUC emisor DENTRO del documento debe coincidir con el RUC
@@ -126,6 +128,8 @@ class NubefactGreProvider extends AbstractFiscalProvider
                 // real justo después del envío (finally) porque $greenterDoc es reutilizado
                 // luego para el PDF, cuyo lookup de empresa/logo necesita el RUC real del tenant.
                 $greenterDoc->getCompany()->setRuc($this->seeApiFactory->getPruebasSolRucPart());
+                $sandboxRuc = $this->seeApiFactory->getPruebasSolRucPart();
+                $swapped = self::swapPartyRuc($greenterDoc, $ruc, $sandboxRuc);
             }
             try {
                 $see = $this->seeApiFactory->build($ruc);
@@ -135,6 +139,9 @@ class NubefactGreProvider extends AbstractFiscalProvider
             }
         } finally {
             $greenterDoc->getCompany()->setRuc($ruc);
+            if (!empty($swapped)) {
+                self::swapPartyRuc($greenterDoc, $sandboxRuc ?? '', $ruc);
+            }
         }
         $signedXml = $see->getLastXml();
 
@@ -188,6 +195,41 @@ class NubefactGreProvider extends AbstractFiscalProvider
         $out->sunatResponse = ['raw' => json_decode(json_encode($result), true)];
 
         return $out;
+    }
+
+    /**
+     * Solo sandbox: el RUC de la empresa del tenant no existe en el sandbox de NubeFact, así que el
+     * emisor se reemplaza por el de la cuenta de pruebas. Cuando la propia empresa también figura
+     * como destinatario (traslado entre establecimientos, compra) o como establecimiento anexo o como emisor del documento relacionado,
+     * ese RUC se reemplaza igual; si no, SUNAT rechaza con 2554 por un RUC que en producción
+     * sí es válido. Devuelve true si cambió algo.
+     */
+    private static function swapPartyRuc(DocumentInterface $doc, string $from, string $to): bool
+    {
+        if ($from === '' || $to === '' || $from === $to) {
+            return false;
+        }
+        $changed = false;
+        $dest = $doc->getDestinatario();
+        if ($dest !== null && $dest->getNumDoc() === $from) {
+            $dest->setNumDoc($to);
+            $changed = true;
+        }
+        $envio = $doc->getEnvio();
+        foreach ([$envio?->getPartida(), $envio?->getLlegada()] as $dir) {
+            if ($dir !== null && $dir->getRuc() === $from) {
+                $dir->setRuc($to);
+                $changed = true;
+            }
+        }
+        foreach ((array) $doc->getAddDocs() as $add) {
+            if ($add !== null && $add->getEmisor() === $from) {
+                $add->setEmisor($to);
+                $changed = true;
+            }
+        }
+
+        return $changed;
     }
 
     private function extractCdrResponse(object $result): ?CdrResponse
