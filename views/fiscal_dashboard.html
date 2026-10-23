@@ -712,9 +712,7 @@
     // 2-4: ningún veredicto sin CDR mueve el estado solo, la persona decide con este botón.
     async function acceptGuideManual(){
       if(!selectedUuid)return;
-      const reason=prompt('Esta guía se marcará como ACEPTADA sin CDR, por decisión suya.
-
-'
+      const reason=prompt('Esta guía se marcará como ACEPTADA sin CDR, por decisión suya.\n\n'
         +'Indique el motivo (ej. "Verificada en el portal SUNAT, CDR no disponible"):');
       if(reason===null)return;
       if(reason.trim().length<10){ alert('El motivo debe tener al menos 10 caracteres.'); return; }
