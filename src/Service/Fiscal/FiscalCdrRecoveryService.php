@@ -178,8 +178,13 @@ class FiscalCdrRecoveryService
      *
      * @return array{ok: bool, found: bool, applied: bool, accepted: bool, status: string, sunat_code: ?string, sunat_message: ?string, message: string}
      */
-    public function acceptWithoutCdr(FiscalDocument $doc): array
+    public function acceptWithoutCdr(FiscalDocument $doc, ?string $manualReason = null): array
     {
+        $manualReason = trim((string) $manualReason);
+        if ($manualReason !== '') {
+            return $this->acceptGuideByUserDecision($doc, $manualReason);
+        }
+
         $lastConsult = $this->readLastConsult($doc);
         if ($lastConsult === null) {
             return array_merge(['ok' => false], $this->result(
@@ -209,6 +214,49 @@ class FiscalCdrRecoveryService
         $this->logger->info('fiscal_accept_without_cdr_manual', [
             'uuid' => $doc->getDocumentUuid(),
             'via' => $lastConsult['via'] ?? null,
+        ]);
+
+        return array_merge(['ok' => true], $result);
+    }
+
+    /**
+     * Decisión EXPLÍCITA del usuario para GUÍAS de remisión: marca la guía como aceptada sin CDR cuando
+     * la persona verificó en SUNAT que existe. Hace falta porque el API de guías solo consulta por ticket
+     * (no por serie y número) y SUNAT puede responder 1033 al ticket de un reenvío aunque la guía ya esté
+     * registrada — en ese caso ninguna consulta puede devolver el CDR ni un veredicto "aceptado".
+     * Exige un motivo (queda en el mensaje del documento y en el log) y no pisa estados definitivos.
+     *
+     * @return array{ok: bool, found: bool, applied: bool, accepted: bool, status: string, sunat_code: ?string, sunat_message: ?string, message: string}
+     */
+    private function acceptGuideByUserDecision(FiscalDocument $doc, string $reason): array
+    {
+        $fail = function (string $message) use ($doc): array {
+            return array_merge(['ok' => false], $this->result(false, false, false, $doc, $message));
+        };
+        if (!self::isGuide($doc)) {
+            return $fail('La aceptación manual por decisión del usuario solo está disponible para guías de remisión.');
+        }
+        if (in_array($doc->getStatus(), [FiscalDocument::STATUS_ACCEPTED, FiscalDocument::STATUS_OBSERVED, FiscalDocument::STATUS_CANCELLED], true)) {
+            return $fail('La guía ya tiene un estado definitivo (' . $doc->getStatus() . '); no se modifica.');
+        }
+        if (mb_strlen($reason) < 10) {
+            return $fail('Indique el motivo (mínimo 10 caracteres), por ejemplo cómo verificó la guía en SUNAT.');
+        }
+
+        $previous = trim((string) $doc->getSunatCode() . ' ' . (string) $doc->getSunatMessage());
+        $result = $this->applyValidWithoutCdr(
+            $doc,
+            null,
+            'Decisión del usuario: verificó que la guía existe en SUNAT. Motivo: ' . $reason
+            . ($previous !== '' ? ' · Respuesta previa del facturador: ' . $previous : '')
+        );
+        $doc->setRejectedAt(null);
+        $this->em->flush();
+
+        $this->logger->warning('fiscal_guide_accepted_by_user_decision', [
+            'uuid' => $doc->getDocumentUuid(),
+            'reason' => $reason,
+            'previous' => $previous,
         ]);
 
         return array_merge(['ok' => true], $result);

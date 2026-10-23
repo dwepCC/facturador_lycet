@@ -432,13 +432,16 @@ class FiscalController extends AbstractController
      *
      * @Route("/documents/{uuid}/accept-without-cdr", methods={"POST"})
      */
-    public function acceptWithoutCdr(string $uuid): JsonResponse
+    public function acceptWithoutCdr(string $uuid, Request $request): JsonResponse
     {
         $doc = $this->repo->findOneBy(['documentUuid' => $uuid]);
         if ($doc === null) {
             return new JsonResponse(['error' => 'no encontrado'], Response::HTTP_NOT_FOUND);
         }
-        $result = $this->cdrRecovery->acceptWithoutCdr($doc);
+        // `manual_reason`: decisión del usuario para guías (ver FiscalCdrRecoveryService::acceptGuideByUserDecision).
+        $payload = json_decode((string) $request->getContent(), true);
+        $manualReason = is_array($payload) ? (string) ($payload['manual_reason'] ?? '') : '';
+        $result = $this->cdrRecovery->acceptWithoutCdr($doc, $manualReason !== '' ? $manualReason : null);
 
         return new JsonResponse($result, ($result['ok'] ?? false) ? Response::HTTP_OK : Response::HTTP_BAD_REQUEST);
     }

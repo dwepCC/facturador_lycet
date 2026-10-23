@@ -112,6 +112,7 @@
           <button class="btn btn-sky" id="btnPoll" type="button">Consultar ticket</button>
           <button class="btn btn-sky" id="btnConsultCdr" type="button" title="Consulta si el comprobante ya fue aceptado y recupera el CDR">Consultar CDR</button>
           <button class="btn btn-indigo" id="btnConsultSunat" type="button" style="display:none" title="Consulta la validez directamente en SUNAT (útil si el PSE falla)">Validar con SUNAT</button>
+          <button class="btn btn-amber" id="btnAcceptGuideManual" type="button" style="display:none" title="Decisión del usuario: la guía existe en SUNAT pero no se puede recuperar su CDR. La marca como aceptada (exige un motivo).">Marcar guía aceptada (decisión manual)</button>
           <button class="btn btn-emerald" id="btnAcceptWithoutCdr" type="button" style="display:none" title="Decisión manual: marca el comprobante como aceptado sin un CDR real de SUNAT. Revise la respuesta cruda de la última consulta antes de usar este botón.">Marcar como aceptado sin CDR</button>
         </div>
         <p id="emitActionHint" class="hint-muted" style="display:none" aria-live="polite"></p>
@@ -709,7 +710,40 @@
     // persistConsultDetail(), sección 14 del plan) dijo "aceptado" pero sin CDR real, y el
     // documento todavía no tiene un veredicto definitivo. Nunca aparece por defecto — reglas
     // 2-4: ningún veredicto sin CDR mueve el estado solo, la persona decide con este botón.
+    async function acceptGuideManual(){
+      if(!selectedUuid)return;
+      const reason=prompt('Esta guía se marcará como ACEPTADA sin CDR, por decisión suya.
+
+'
+        +'Indique el motivo (ej. "Verificada en el portal SUNAT, CDR no disponible"):');
+      if(reason===null)return;
+      if(reason.trim().length<10){ alert('El motivo debe tener al menos 10 caracteres.'); return; }
+      const btn=qs('btnAcceptGuideManual');
+      const prev=btn.textContent;
+      btn.disabled=true; btn.textContent='Aplicando…';
+      try{
+        const r=await apiFetch(url('/documents/'+selectedUuid+'/accept-without-cdr'),{
+          method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manual_reason:reason.trim()})});
+        const body=await r.json();
+        if(!r.ok||!body.ok) throw new Error(body.message||body.error||'No se pudo aplicar la aceptación manual');
+        alert(body.message||'Guía marcada como aceptada.');
+        await detail(selectedUuid);
+        await loadStats();
+        await loadList();
+      }catch(e){
+        alert(e.message||'Error al aplicar la aceptación manual');
+      }finally{
+        btn.disabled=false; btn.textContent=prev;
+      }
+    }
+
     function toggleAcceptWithoutCdrButton(doc, pseResponse){
+      const gbtn=qs('btnAcceptGuideManual');
+      if(gbtn){
+        const gst=String(doc.status||'').toLowerCase();
+        const isGuide=['09','31'].includes(String(doc.document_type||'').trim());
+        gbtn.style.display=(isGuide && ['rejected','error','sent'].includes(gst))?'inline-flex':'none';
+      }
       const btn=qs('btnAcceptWithoutCdr');
       if(!btn) return;
       const st=String(doc.status||'').toLowerCase();
@@ -811,6 +845,7 @@
     qs('btnConsultCdr').onclick=()=>consultCdr(qs('btnConsultCdr').dataset.via||undefined);
     qs('btnConsultSunat').onclick=()=>consultCdr('sunat');
     qs('btnAcceptWithoutCdr').onclick=()=>acceptWithoutCdr();
+    qs('btnAcceptGuideManual').onclick=()=>acceptGuideManual();
 
     setDefaultDateRange();
     loadStats();

@@ -113,6 +113,52 @@ class FiscalCdrRecoveryServiceTest extends TestCase
         self::assertSame(SunatValidityClassifier::UNKNOWN, $saved['last_consult']['verdict']);
     }
 
+    public function testGuideCanBeAcceptedByUserDecisionEvenWhenSunatTicketSays1033(): void
+    {
+        $doc = $this->makeGuide('TICKET-1');
+        $doc->setSunatCode('1033');
+        $doc->setSunatMessage('El comprobante fue registrado previamente con otros datos');
+        $doc->setRejectedAt(new \DateTimeImmutable());
+
+        $res = $this->makeGuideService(null)->acceptWithoutCdr($doc, 'Verificada en el portal SUNAT, el CDR no esta disponible');
+
+        self::assertTrue($res['ok']);
+        self::assertSame(FiscalDocument::STATUS_ACCEPTED, $doc->getStatus());
+        self::assertNull($doc->getSunatCode(), 'no se fabrica un codigo de aceptacion');
+        self::assertNull($doc->getRejectedAt());
+        self::assertNull($doc->getCdrUrl(), 'sigue sin CDR');
+        self::assertSame(FiscalDocument::TENANT_SYNC_PENDING, $doc->getTenantSyncState(), 'el tenant se decide aparte (Si/No)');
+        self::assertStringContainsString('Verificada en el portal SUNAT', (string) $doc->getSunatMessage());
+    }
+
+    public function testManualAcceptRequiresAReasonOfEnoughLength(): void
+    {
+        $doc = $this->makeGuide('TICKET-1');
+        $res = $this->makeGuideService(null)->acceptWithoutCdr($doc, 'corto');
+
+        self::assertFalse($res['ok']);
+        self::assertSame(FiscalDocument::STATUS_REJECTED, $doc->getStatus());
+    }
+
+    public function testManualAcceptIsOnlyForGuidesNotInvoices(): void
+    {
+        $doc = $this->makeGuide('TICKET-1');
+        $doc->setDocumentType('01');
+        $res = $this->makeGuideService(null)->acceptWithoutCdr($doc, 'Motivo suficientemente largo');
+
+        self::assertFalse($res['ok']);
+        self::assertSame(FiscalDocument::STATUS_REJECTED, $doc->getStatus());
+    }
+
+    public function testManualAcceptDoesNotTouchAlreadyDefinitiveGuide(): void
+    {
+        $doc = $this->makeGuide('TICKET-1');
+        $doc->setStatus(FiscalDocument::STATUS_ACCEPTED);
+        $res = $this->makeGuideService(null)->acceptWithoutCdr($doc, 'Motivo suficientemente largo');
+
+        self::assertFalse($res['ok']);
+    }
+
     public function testGuideWithoutTicketExplainsAndDoesNotCallSunat(): void
     {
         $doc = $this->makeGuide(null);
