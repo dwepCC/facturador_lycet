@@ -11,7 +11,9 @@ use App\Service\Fiscal\Provider\PseAuthBuilder;
 use App\Service\Fiscal\Provider\PseProviderRegistry;
 use App\Service\Fiscal\Provider\PseResponseFormatter;
 use App\Service\Fiscal\Provider\SunatCdrClassifier;
+use App\Service\Fiscal\Provider\SunatDuplicateClassifier;
 use App\Service\Fiscal\Provider\SunatValidityClassifier;
+use App\Service\SeeApiFactory;
 use Doctrine\ORM\EntityManagerInterface;
 use Greenter\Model\Response\CdrResponse;
 use Greenter\Ws\Reader\DomCdrReader;
@@ -38,6 +40,7 @@ class FiscalCdrRecoveryService
     private PseAuthBuilder $pseAuthBuilder;
     private EntityManagerInterface $em;
     private LoggerInterface $logger;
+    private SeeApiFactory $seeApiFactory;
 
     public function __construct(
         EmpresaRepository $empresaRepo,
@@ -46,7 +49,8 @@ class FiscalCdrRecoveryService
         FiscalQueueService $queue,
         PseAuthBuilder $pseAuthBuilder,
         EntityManagerInterface $em,
-        LoggerInterface $logger
+        LoggerInterface $logger,
+        SeeApiFactory $seeApiFactory
     ) {
         $this->empresaRepo = $empresaRepo;
         $this->storage = $storage;
@@ -55,6 +59,7 @@ class FiscalCdrRecoveryService
         $this->pseAuthBuilder = $pseAuthBuilder;
         $this->em = $em;
         $this->logger = $logger;
+        $this->seeApiFactory = $seeApiFactory;
     }
 
     /**
@@ -87,10 +92,22 @@ class FiscalCdrRecoveryService
             ? ($forceMode === 'pse' ? 'pse' : 'sunat')
             : strtolower(trim((string) ($doc->getSendMode() ?? $empresa->getSendMode())));
 
+        // Las guías de remisión (09/31) NO existen en el servicio de consulta de comprobantes de SUNAT
+        // (ConsultCdrService/SOAP, solo factura/boleta/NC/ND): responde "no existe" aunque la guía esté
+        // aceptada. Su único canal es el API REST GRE, por ticket — sin importar el modo de envío.
+        $isGuide = self::isGuide($doc);
+        if ($isGuide) {
+            $mode = 'sunat_gre';
+        }
+
         try {
-            $consult = $mode === 'pse'
-                ? $this->consultPse($empresa, $doc, $ruc)
-                : $this->consultSunatDirect($empresa, $doc, $ruc);
+            if ($isGuide) {
+                $consult = $this->consultGreTicket($empresa, $doc, $ruc);
+            } else {
+                $consult = $mode === 'pse'
+                    ? $this->consultPse($empresa, $doc, $ruc)
+                    : $this->consultSunatDirect($empresa, $doc, $ruc);
+            }
         } catch (\Throwable $e) {
             $this->logger->warning('fiscal_cdr_recovery_failed', [
                 'uuid' => $doc->getDocumentUuid(),
@@ -249,6 +266,98 @@ class FiscalCdrRecoveryService
             default:
                 return $fallback !== '' ? $fallback : 'SUNAT aún no tiene el CDR disponible para este comprobante.';
         }
+    }
+
+    public static function isGuide(FiscalDocument $doc): bool
+    {
+        return in_array(strtoupper(trim($doc->getDocumentType())), ['09', '31'], true);
+    }
+
+    /**
+     * Consulta de una guía de remisión por el API REST GRE (getStatus por ticket), el mismo canal
+     * que usa el sondeo de estado tras el envío. No hay consulta por serie-número en ese API: sin
+     * ticket guardado no se puede consultar.
+     *
+     * @return array{cdr_response: ?CdrResponse, cdr_zip: ?string, status_code: ?string, status_message: string, message: string, verdict?: string}
+     */
+    private function consultGreTicket(Empresa $empresa, FiscalDocument $doc, string $ruc): array
+    {
+        if (!GreEmitRouting::shouldUseGreRestApi($doc, $empresa)) {
+            return $this->consultNull(
+                'Esta guía no se emite por el API REST de SUNAT: no se puede consultar desde aquí.'
+            );
+        }
+        $ticket = trim((string) $doc->getTicket());
+        if ($ticket === '') {
+            return $this->consultNull(
+                'La guía no tiene ticket de SUNAT guardado. Las guías se consultan por ticket (no por '
+                . 'serie y número); verifique el estado en el portal de SUNAT.'
+            );
+        }
+
+        $see = $this->seeApiFactory->build($ruc);
+        $result = $see->getStatus($ticket);
+
+        $code = method_exists($result, 'getCode') ? trim((string) ($result->getCode() ?? '')) : '';
+        $message = '';
+        if (method_exists($result, 'getError') && $result->getError()) {
+            $err = $result->getError();
+            if ($code === '' && method_exists($err, 'getCode')) {
+                $code = trim((string) $err->getCode());
+            }
+            if (method_exists($err, 'getMessage')) {
+                $message = trim((string) $err->getMessage());
+            }
+        }
+
+        $cdrResponse = method_exists($result, 'getCdrResponse') ? $result->getCdrResponse() : null;
+        $cdrZip = method_exists($result, 'getCdrZip') ? $result->getCdrZip() : null;
+        $hasCdr = $cdrResponse instanceof CdrResponse && $cdrZip !== null && $cdrZip !== '';
+        if ($hasCdr && $message === '') {
+            $message = trim((string) $cdrResponse->getDescription());
+        }
+
+        $detail = sprintf(
+            'SUNAT GRE API · getStatus(ticket %s) code=%s · msg="%s"%s',
+            $ticket,
+            $code !== '' ? $code : '-',
+            $message,
+            $hasCdr ? ' · con CDR' : ' · sin CDR'
+        );
+
+        $out = [
+            'cdr_response' => $hasCdr ? $cdrResponse : null,
+            'cdr_zip' => $hasCdr ? $cdrZip : null,
+            'status_code' => $code !== '' ? $code : null,
+            'status_message' => $message,
+            'provider_detail' => $detail,
+            'raw_response' => null,
+            'message' => '',
+        ];
+        if ($hasCdr) {
+            return $out;
+        }
+
+        if (SunatDuplicateClassifier::isAlreadySubmitted($code, $message)) {
+            // 1033: SUNAT ya tiene un documento con ese correlativo, pero con datos distintos a los de este
+            // envío — el ticket de ESTE envío no entrega CDR y no prueba que ESTA guía esté aceptada.
+            $out['verdict'] = SunatValidityClassifier::UNKNOWN;
+            $out['message'] = 'SUNAT informa que ese correlativo ya fue registrado previamente (código '
+                . ($code !== '' ? $code : '1033') . '), pero el ticket de este envío no devuelve CDR. '
+                . 'Si la guía existe en SUNAT, descargue su CDR desde el portal y aplíquelo manualmente.';
+
+            return $out;
+        }
+        if (in_array($code, ['98', '500'], true) || SunatValidityClassifier::classify($code, $message) === SunatValidityClassifier::IN_PROCESS) {
+            $out['verdict'] = SunatValidityClassifier::IN_PROCESS;
+
+            return $out;
+        }
+        $out['message'] = $message !== ''
+            ? 'SUNAT (API de guías) respondió: ' . $message
+            : 'SUNAT (API de guías) aún no tiene el resultado de este ticket.';
+
+        return $out;
     }
 
     /**

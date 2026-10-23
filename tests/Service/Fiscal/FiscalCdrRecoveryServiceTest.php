@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tests\Service\Fiscal;
 
+use App\Entity\Empresa;
 use App\Entity\FiscalDocument;
 use App\Repository\EmpresaRepository;
 use App\Service\Fiscal\FiscalCdrRecoveryService;
@@ -12,7 +13,11 @@ use App\Service\Fiscal\FiscalStorageService;
 use App\Service\Fiscal\FiscalWebhookService;
 use App\Service\Fiscal\Provider\PseAuthBuilder;
 use App\Service\Fiscal\Provider\SunatValidityClassifier;
+use App\Service\SeeApiFactory;
 use Doctrine\ORM\EntityManagerInterface;
+use Greenter\Api;
+use Greenter\Model\Response\Error;
+use Greenter\Model\Response\StatusResult;
 use Psr\Log\LoggerInterface;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
@@ -33,8 +38,103 @@ class FiscalCdrRecoveryServiceTest extends TestCase
             $this->createMock(FiscalQueueService::class),
             $this->createMock(PseAuthBuilder::class),
             $this->createMock(EntityManagerInterface::class),
-            $this->createMock(LoggerInterface::class)
+            $this->createMock(LoggerInterface::class),
+            $this->createMock(SeeApiFactory::class)
         );
+    }
+
+    /** Servicio con empresa SUNAT directo en producción y un API GRE simulado que responde $status. */
+    private function makeGuideService(?StatusResult $status): FiscalCdrRecoveryService
+    {
+        $empresa = new Empresa();
+        $empresa->setRuc('20546402933');
+        $empresa->setAmbiente('produccion');
+        $empresa->setSendMode('sunat_direct');
+        $repo = $this->createMock(EmpresaRepository::class);
+        $repo->method('find')->willReturn($empresa);
+
+        $factory = $this->createMock(SeeApiFactory::class);
+        if ($status === null) {
+            $factory->expects(self::never())->method('build');
+        } else {
+            $api = $this->createMock(Api::class);
+            $api->expects(self::once())->method('getStatus')->with('TICKET-1')->willReturn($status);
+            $factory->expects(self::once())->method('build')->with('20546402933')->willReturn($api);
+        }
+        $em = $this->createMock(EntityManagerInterface::class);
+
+        return new FiscalCdrRecoveryService(
+            $repo,
+            $this->createMock(FiscalStorageService::class),
+            $this->createMock(FiscalWebhookService::class),
+            $this->createMock(FiscalQueueService::class),
+            $this->createMock(PseAuthBuilder::class),
+            $em,
+            $this->createMock(LoggerInterface::class),
+            $factory
+        );
+    }
+
+    private function makeGuide(?string $ticket): FiscalDocument
+    {
+        $doc = new FiscalDocument();
+        $doc->setDocumentUuid('99999999-9999-9999-9999-999999999999');
+        $doc->setDocumentType('09');
+        $doc->setSeries('T001');
+        $doc->setNumber('342');
+        $doc->setStatus(FiscalDocument::STATUS_REJECTED);
+        $doc->setSnapshotJson((string) json_encode(['document' => ['company' => ['ruc' => '20546402933']]]));
+        if ($ticket !== null) {
+            $doc->setTicket($ticket);
+        }
+
+        return $doc;
+    }
+
+    public function testGuideIsConsultedByTicketThroughGreApiNotTheInvoiceSoapService(): void
+    {
+        $error = new Error();
+        $error->setCode('1033');
+        $error->setMessage('El comprobante fue registrado previamente con otros datos');
+        $status = new StatusResult();
+        $status->setSuccess(false);
+        $status->setError($error);
+
+        $doc = $this->makeGuide('TICKET-1');
+        $res = $this->makeGuideService($status)->recover($doc);
+
+        self::assertFalse($res['applied'], 'una consulta sin CDR no cambia el estado');
+        self::assertSame(FiscalDocument::STATUS_REJECTED, $doc->getStatus());
+        self::assertStringContainsString('SUNAT GRE API', $res['detail']);
+        self::assertStringContainsString('1033', $res['message']);
+        self::assertStringNotContainsString('NO existe', $res['message'], 'nunca el veredicto "no existe" del servicio de facturas');
+        $saved = json_decode((string) $doc->getPseResponseJson(), true);
+        self::assertSame('sunat_gre', $saved['last_consult']['via']);
+        self::assertSame(SunatValidityClassifier::UNKNOWN, $saved['last_consult']['verdict']);
+    }
+
+    public function testGuideWithoutTicketExplainsAndDoesNotCallSunat(): void
+    {
+        $doc = $this->makeGuide(null);
+        $res = $this->makeGuideService(null)->recover($doc);
+
+        self::assertFalse($res['applied']);
+        self::assertStringContainsString('ticket', strtolower($res['message']));
+    }
+
+    public function testGuideInProcessIsReportedAsInProcess(): void
+    {
+        $error = new Error();
+        $error->setCode('98');
+        $error->setMessage('En proceso');
+        $status = new StatusResult();
+        $status->setSuccess(false);
+        $status->setError($error);
+
+        $doc = $this->makeGuide('TICKET-1');
+        $res = $this->makeGuideService($status)->recover($doc);
+
+        self::assertStringContainsString('EN PROCESO', $res['message']);
     }
 
     private function invokePrivate(object $service, string $method, array $args)
