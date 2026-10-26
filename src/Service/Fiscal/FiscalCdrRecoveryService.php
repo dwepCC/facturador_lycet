@@ -555,7 +555,10 @@ class FiscalCdrRecoveryService
         $prod = strtolower(trim((string) $doc->getSunatMode())) === 'production'
             || strtolower(trim($empresa->getAmbiente())) === 'produccion';
         $path = ($prod ? '/api/cpe/consultar/' : '/api/cpe/consultar-demo/') . rawurlencode($filenameBase);
-        $endpoint = $this->buildEndpoint($baseUrl, $path);
+        // Contrato oficial (openapi.json de ValidaPSE): token_acceso va como query param en la consulta; el
+        // Bearer se conserva porque es lo que ya usa el resto de la integración.
+        $token = $empresa->resolvePseToken();
+        $endpoint = $this->buildEndpoint($baseUrl, $path) . ($token !== '' ? '?token_acceso=' . rawurlencode($token) : '');
 
         [$httpCode, $bodyStr] = $this->pseHttpGet($endpoint, $this->buildPseHeaders($empresa));
         $rawBody = trim(mb_substr($bodyStr, 0, 600));
@@ -567,7 +570,14 @@ class FiscalCdrRecoveryService
         // Envelope ValidaPSE: isSuccess (bool), estado (200 ok / 400 error), mensaje | message | errors.
         $isSuccess = filter_var($resp['isSuccess'] ?? false, FILTER_VALIDATE_BOOLEAN);
         $estado = isset($resp['estado']) ? (string) $resp['estado'] : null;
+        // La consulta documentada responde codigo_sunat / descripcion_sunat (no estado / mensaje).
+        if ($estado === null && isset($resp['codigo_sunat']) && $resp['codigo_sunat'] !== '') {
+            $estado = (string) $resp['codigo_sunat'];
+        }
         $pseMsg = PseResponseFormatter::message($resp);
+        if ($pseMsg === '' && !empty($resp['descripcion_sunat']) && is_string($resp['descripcion_sunat'])) {
+            $pseMsg = trim($resp['descripcion_sunat']);
+        }
         $statusMessage = trim(($estado !== null && $estado !== '' ? $estado . ' ' : '') . $pseMsg);
         $pseDetail = sprintf(
             'PSE · HTTP %d · isSuccess=%s · estado=%s · body: %s',

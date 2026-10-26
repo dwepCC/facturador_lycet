@@ -45,3 +45,13 @@ ejecutar `--uuid=<uuid> --execute` (o "Consultar CDR" en el dashboard) y revisar
 endpoint `…/consultar/RUC-09-SERIE-NUM`. Si trae `cdr` (o `xml` con ApplicationResponse) se aplica solo. Si
 responde `isSuccess=true` sin CDR, la guía existe pero el PSE no entrega su CDR: quedará pendiente y la decisión
 es la aceptación manual por usuario ya existente. Si responde 400/"no encontrado", revisar el formato del nombre.
+
+## Contrato oficial de ValidaPSE (openapi.json, revisado antes del push)
+- `GET /api/cpe/consultar/{RUC-TIPO-SERIE-NUMERO}` recibe `token_acceso` como **query param** y responde
+  `cdr` (base64), `codigo_sunat`, `descripcion_sunat`, `isSuccess`. La consulta ahora envía también el query
+  param (se conserva el Bearer) y lee `codigo_sunat`/`descripcion_sunat` como estado/mensaje si no vienen
+  `estado`/`mensaje`.
+- La documentación pública no menciona guías ni GRE en ningún endpoint, ni duplicados: sigue sin estar
+  confirmado que la consulta devuelva CDR para guías. Los endpoints de producción con una empresa en servidor
+  DEMO responden 202 «No está configurado en ambiente PRODUCCIÓN EN EL PORTAL.» (mismo caso a descartar si
+  una consulta no encuentra nada).

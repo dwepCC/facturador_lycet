@@ -130,7 +130,7 @@ class FiscalGrePseConsultTest extends TestCase
         $doc = $this->guide('pse', true);
         $res = $svc->recover($doc);
 
-        self::assertSame(['https://pse.example.test/api/cpe/consultar/' . self::RUC . '-09-T002-66'], $spy->endpoints);
+        self::assertSame(['https://pse.example.test/api/cpe/consultar/' . self::RUC . '-09-T002-66?token_acceso=tok'], $spy->endpoints);
         self::assertFalse($res['applied']);
         self::assertTrue($res['queried']);
         self::assertSame(FiscalDocument::STATUS_ERROR, $doc->getStatus(), 'sin CDR real no cambia el estado');
