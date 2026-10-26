@@ -343,7 +343,7 @@ class FiscalController extends AbstractController
      */
     public function forceSend(string $uuid): JsonResponse
     {
-        return $this->enqueueAction($uuid, FiscalQueueService::QUEUE_EMIT, 'force_queued');
+        return $this->enqueueAction($uuid, FiscalQueueService::QUEUE_EMIT, 'force_queued', false, true);
     }
 
     /**
@@ -648,7 +648,7 @@ class FiscalController extends AbstractController
      *     misma regla que usa la acción masiva, sin duplicarla. `force` (y poll/email/consult)
      *     nunca pasan $enforceGuard=true: siguen siendo el override administrativo explícito.
      */
-    private function enqueueAction(string $uuid, string $queue, string $status, bool $enforceGuard = false): JsonResponse
+    private function enqueueAction(string $uuid, string $queue, string $status, bool $enforceGuard = false, bool $force = false): JsonResponse
     {
         $doc = $this->repo->findOneBy(['documentUuid' => $uuid]);
         if ($doc === null) {
@@ -678,7 +678,7 @@ class FiscalController extends AbstractController
         }
 
         try {
-            $this->queue->push($queue, ['document_uuid' => $uuid]);
+            $this->queue->push($queue, $force ? ['document_uuid' => $uuid, 'force' => true] : ['document_uuid' => $uuid]);
         } catch (\Throwable $e) {
             return new JsonResponse(['error' => $e->getMessage()], Response::HTTP_INTERNAL_SERVER_ERROR);
         }

@@ -147,6 +147,10 @@ class FiscalBulkActionService
         if ($doc->getStatus() === FiscalDocument::STATUS_ACCEPTED) {
             return true;
         }
+        // Guía ya enviada que espera veredicto: reenviar no aporta el CDR y duplica el envío; solo "Consultar CDR".
+        if (FiscalEmitProcessor::isAwaitingVerdictGuide($doc)) {
+            return true;
+        }
 
         return in_array($doc->getErrorType(), [
             FiscalDocument::ERROR_BUSINESS,
@@ -157,6 +161,10 @@ class FiscalBulkActionService
 
     private function payloadFor(FiscalDocument $doc, string $action): array
     {
+        if ($action === 'force') {
+            return ['document_uuid' => $doc->getDocumentUuid(), 'force' => true];
+        }
+
         return ['document_uuid' => $doc->getDocumentUuid()];
     }
 }

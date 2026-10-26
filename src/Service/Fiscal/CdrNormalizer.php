@@ -40,14 +40,23 @@ class CdrNormalizer
         return self::createZip($innerName, $raw);
     }
 
-    public static function filenameBaseFromDocument(FiscalDocument $doc): string
+    /**
+     * RUC-TIPO-SERIE-NUMERO. En guías el snapshot puede venir anidado en `document`; si aun así no se
+     * halla el RUC, se usa $fallbackRuc (el que ya resolvió el llamador) para no dejar el nombre vacío.
+     */
+    public static function filenameBaseFromDocument(FiscalDocument $doc, string $fallbackRuc = ''): string
     {
         $snapshot = json_decode($doc->getSnapshotJson(), true);
         if (!is_array($snapshot)) {
             $snapshot = [];
         }
-        $ruc = $snapshot['company_ruc'] ?? ($snapshot['company']['ruc'] ?? '');
-        $ruc = preg_replace('/\D/', '', (string) $ruc);
+        $ruc = self::rucFromSnapshot($snapshot);
+        if ($ruc === '' && isset($snapshot['document']) && is_array($snapshot['document'])) {
+            $ruc = self::rucFromSnapshot($snapshot['document']);
+        }
+        if ($ruc === '') {
+            $ruc = (string) preg_replace('/\D/', '', $fallbackRuc);
+        }
 
         return sprintf(
             '%s-%s-%s-%s',
@@ -56,6 +65,16 @@ class CdrNormalizer
             $doc->getSeries(),
             $doc->getNumber()
         );
+    }
+
+    /**
+     * @param array<string, mixed> $snapshot
+     */
+    private static function rucFromSnapshot(array $snapshot): string
+    {
+        $ruc = $snapshot['company_ruc'] ?? ($snapshot['company']['ruc'] ?? '');
+
+        return (string) preg_replace('/\D/', '', (string) $ruc);
     }
 
     public static function isZipArchive(string $content): bool

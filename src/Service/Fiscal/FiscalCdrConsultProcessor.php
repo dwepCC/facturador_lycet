@@ -28,8 +28,16 @@ use Psr\Log\LoggerInterface;
  */
 class FiscalCdrConsultProcessor
 {
-    /** Tope de intentos automáticos (solo GRE) antes de marcar el documento para revisión manual. */
+    /** Tope de intentos automáticos (solo GRE por API REST/ticket) antes de marcar el documento para revisión manual. */
     private const MAX_AUTO_ATTEMPTS = 8;
+
+    /**
+     * Guías enviadas por PSE: el PSE no devuelve el CDR en el envío y puede tardar en tenerlo, así que
+     * la ventana es más larga (espera creciente 1, 2, 4, 8, 16, 32 y luego 60 min ≈ 6 h en total).
+     */
+    private const MAX_AUTO_ATTEMPTS_PSE = 12;
+    private const PSE_BASE_DELAY_SECONDS = 60;
+    private const PSE_MAX_DELAY_SECONDS = 3600;
 
     private FiscalDocumentRepository $repo;
     private FiscalCdrRecoveryService $recovery;
@@ -112,20 +120,34 @@ class FiscalCdrConsultProcessor
             return;
         }
 
-        if ($attempt >= self::MAX_AUTO_ATTEMPTS) {
-            // Se agotó la ventana automática (~50 min desde el envío) sin que SUNAT/PSE resolviera
-            // el ticket. El comprobante SÍ fue enviado — esto no es un rechazo, solo que la
+        $viaPse = self::isPseGuide($doc);
+        $maxAttempts = $viaPse ? self::MAX_AUTO_ATTEMPTS_PSE : self::MAX_AUTO_ATTEMPTS;
+
+        if ($attempt >= $maxAttempts) {
+            // Se agotó la ventana automática (~50 min por API REST, ~6 h por PSE) sin que SUNAT/PSE resolviera
+            // la guía. El comprobante SÍ fue enviado — esto no es un rechazo, solo que la
             // confirmación automática no llegó a tiempo. Igual criterio que el resto de casos
             // "manual_only": no se reintenta solo, queda visible en el panel (errors_only ya
             // filtra por status=error) para que una persona use "Consultar CDR" cuando pueda.
             $doc->setStatus(FiscalDocument::STATUS_ERROR);
             $doc->setErrorType('manual_only');
             $doc->setRetryable(false);
-            $doc->setSunatMessage(
-                'La guía fue enviada correctamente, pero SUNAT/PSE no confirmó el CDR tras '
-                . self::MAX_AUTO_ATTEMPTS . ' consultas automáticas (~50 min). No está rechazada — '
-                . 'use "Consultar CDR" o "Validar con SUNAT" para verificar el resultado manualmente.'
-            );
+            $window = $viaPse ? '~6 h' : '~50 min';
+            if (($result['queried'] ?? true) === false) {
+                // La última "consulta" ni siquiera llegó al proveedor (sin ticket / sin token / sin URL):
+                // no se puede afirmar que SUNAT/PSE no confirmó nada.
+                $doc->setSunatMessage(
+                    'La guía fue enviada, pero no se pudo consultar su CDR automáticamente: '
+                    . trim((string) ($result['message'] ?? '')) . ' Verifique la configuración y use '
+                    . '"Consultar CDR" para reintentar manualmente.'
+                );
+            } else {
+                $doc->setSunatMessage(
+                    'La guía fue enviada correctamente, pero SUNAT/PSE no confirmó el CDR tras '
+                    . $maxAttempts . ' consultas automáticas (' . $window . '). No está rechazada — '
+                    . 'use "Consultar CDR" o "Validar con SUNAT" para verificar el resultado manualmente.'
+                );
+            }
             $this->em->flush();
             $this->logger->warning('fiscal_gre_auto_consult_exhausted', [
                 'uuid' => $doc->getDocumentUuid(),
@@ -135,8 +157,16 @@ class FiscalCdrConsultProcessor
             return;
         }
 
-        $delaySeconds = min(1200, 30 * (2 ** ($attempt - 1)));
+        $delaySeconds = $viaPse
+            ? min(self::PSE_MAX_DELAY_SECONDS, self::PSE_BASE_DELAY_SECONDS * (2 ** ($attempt - 1)))
+            : min(1200, 30 * (2 ** ($attempt - 1)));
         $this->queue->scheduleCdrConsultRetry($doc->getDocumentUuid(), $attempt + 1, $delaySeconds);
+    }
+
+    /** Guía cuyo envío fue por PSE (no hay ticket: el único canal de consulta es el PSE). */
+    private static function isPseGuide(FiscalDocument $doc): bool
+    {
+        return strtolower(trim((string) $doc->getSendMode())) === 'pse';
     }
 
     /**

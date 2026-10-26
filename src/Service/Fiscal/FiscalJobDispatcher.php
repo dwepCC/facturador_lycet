@@ -73,7 +73,7 @@ class FiscalJobDispatcher
             case FiscalQueueService::QUEUE_EMIT:
             case FiscalQueueService::QUEUE_RETRY:
             case FiscalQueueService::QUEUE_PSE_RETRY:
-                $this->emitProcessor->processByUuid($uuid);
+                $this->emitProcessor->processByUuid($uuid, (bool) ($payload['force'] ?? false));
                 return;
             case FiscalQueueService::QUEUE_EMAIL:
                 $this->emailProcessor->processByUuid($uuid);

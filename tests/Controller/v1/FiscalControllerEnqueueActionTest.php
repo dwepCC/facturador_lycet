@@ -80,7 +80,10 @@ class FiscalControllerEnqueueActionTest extends TestCase
         if ($expectPush) {
             $queue->expects($this->once())
                 ->method('push')
-                ->with($expectedQueue, ['document_uuid' => $doc !== null ? $doc->getDocumentUuid() : 'missing']);
+                ->with($expectedQueue, $this->callback(static function (array $payload) use ($doc): bool {
+                    // la acción force agrega force=true al payload; el resto no
+                    return ($payload['document_uuid'] ?? null) === ($doc !== null ? $doc->getDocumentUuid() : 'missing');
+                }));
         } else {
             $queue->expects($this->never())->method('push');
         }

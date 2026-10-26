@@ -67,16 +67,20 @@ class FiscalEmitProcessor
         $this->pdfResolver = $pdfResolver;
     }
 
-    public function processByUuid(string $documentUuid): void
+    public function processByUuid(string $documentUuid, bool $force = false): void
     {
         $doc = $this->repo->findOneBy(['documentUuid' => $documentUuid]);
         if ($doc === null) {
             throw new \InvalidArgumentException('Documento fiscal no encontrado: ' . $documentUuid);
         }
-        $this->process($doc);
+        $this->process($doc, $force);
     }
 
-    public function process(FiscalDocument $doc): void
+    /**
+     * @param bool $force override administrativo explícito (acción "force"): permite reenviar una guía que
+     *                    ya fue enviada y espera veredicto. Sin force, esa guía solo se consulta.
+     */
+    public function process(FiscalDocument $doc, bool $force = false): void
     {
         // Idempotencia: ACCEPTED y OBSERVED son ambos estados terminales (retryable=false,
         // ver más abajo). Si solo se comprobaba ACCEPTED, un documento aceptado-con-observación
@@ -92,6 +96,16 @@ class FiscalEmitProcessor
         // hasta acá): cubre la carrera improbable de que ya hubiera un job en Redis cuando se
         // marcó "atendido". No debe volver a llamar a SUNAT/PSE bajo ninguna circunstancia.
         if ($doc->isAttended()) {
+            return;
+        }
+        // Guía ya enviada y sin veredicto (SENT) o cerrada para revisión manual tras un envío real: reenviarla
+        // solo genera tickets/duplicados nuevos en el PSE/SUNAT sin aportar el CDR. Se consulta, no se reenvía.
+        if (!$force && self::isAwaitingVerdictGuide($doc)) {
+            $this->logger->warning('fiscal_emit_skipped_guide_already_sent', [
+                'uuid' => $doc->getDocumentUuid(),
+                'status' => $doc->getStatus(),
+                'error_type' => $doc->getErrorType(),
+            ]);
             return;
         }
 
@@ -236,7 +250,7 @@ class FiscalEmitProcessor
                 }
             }
             if ($result->ticket !== null && $result->ticket !== '') {
-                $doc->setTicket($result->ticket);
+                $this->keepOriginalTicket($doc, $result->ticket);
             }
             $doc->setSunatCode($result->sunatCode);
             $doc->setSunatMessage($result->sunatMessage ?? $result->pseMessage);
@@ -372,6 +386,45 @@ class FiscalEmitProcessor
         }
     }
 
+    /**
+     * ¿Guía (09/31) ya enviada que espera veredicto? SENT, o ERROR cerrado (manual_only/permanent) tras haberse
+     * enviado de verdad (sentAt). Ver process().
+     */
+    public static function isAwaitingVerdictGuide(FiscalDocument $doc): bool
+    {
+        if ($doc->getSentAt() === null) {
+            return false;
+        }
+        $closed = $doc->getStatus() === FiscalDocument::STATUS_ERROR
+            && in_array($doc->getErrorType(), ['manual_only', FiscalDocument::ERROR_PERMANENT], true);
+        if ($doc->getStatus() !== FiscalDocument::STATUS_SENT && !$closed) {
+            return false;
+        }
+
+        return FiscalCdrRecoveryService::isGuide($doc);
+    }
+
+    /**
+     * El primer ticket de una guía es el que SUNAT ata al CDR original; el de un reenvío (p. ej. 1033 sin
+     * CDR) no debe pisarlo. Un ticket distinto se deja solo en el log.
+     */
+    private function keepOriginalTicket(FiscalDocument $doc, string $ticket): void
+    {
+        $current = trim((string) $doc->getTicket());
+        if ($current === '') {
+            $doc->setTicket($ticket);
+
+            return;
+        }
+        if ($current !== $ticket) {
+            $this->logger->warning('fiscal_ticket_kept_original', [
+                'uuid' => $doc->getDocumentUuid(),
+                'original_ticket' => $current,
+                'ignored_ticket' => $ticket,
+            ]);
+        }
+    }
+
     private function handleTicketOnlyResult(
         FiscalDocument $doc,
         string $documentClass,
@@ -390,11 +443,13 @@ class FiscalEmitProcessor
             return false;
         }
 
-        $doc->setTicket($ticket);
+        $this->keepOriginalTicket($doc, $ticket);
         $doc->setSentAt(new \DateTimeImmutable());
         $doc->setSunatCode($result->sunatCode);
         $doc->setSunatMessage($result->sunatMessage);
         $doc->setStatus(FiscalDocument::STATUS_SENT);
+        // Cada envío cuenta como intento: sin esto todos los reenvíos quedaban como "intento 1".
+        $doc->setRetryCount($doc->getRetryCount() + 1);
 
         $signedXml = trim((string) ($result->signedXml ?? ''));
         if ($signedXml !== '') {
@@ -512,6 +567,7 @@ class FiscalEmitProcessor
         if (!empty($result->pseResponse)) {
             $doc->setPseResponseJson(json_encode($result->pseResponse, JSON_UNESCAPED_UNICODE) ?: null);
         }
+        $doc->setRetryCount($doc->getRetryCount() + 1);
         $this->recordAttempt($doc, $attemptNum, $providerName, FiscalDocument::STATUS_SENT, $result, null, $started);
         $this->em->flush();
         $this->notifyOrEnqueueSync($doc);

@@ -94,14 +94,19 @@ class FiscalCdrRecoveryService
 
         // Las guías de remisión (09/31) NO existen en el servicio de consulta de comprobantes de SUNAT
         // (ConsultCdrService/SOAP, solo factura/boleta/NC/ND): responde "no existe" aunque la guía esté
-        // aceptada. Su único canal es el API REST GRE, por ticket — sin importar el modo de envío.
+        // aceptada. Según cómo se emitió la guía:
+        //  - API REST GRE (beta NubeFact o sunat_direct): se consulta por ticket (getStatus).
+        //  - PSE en producción (sin ticket, ver GreEmitRouting): se consulta al PSE por RUC-TIPO-SERIE-NUMERO,
+        //    el mismo canal que usa factura/boleta por PSE. Antes se forzaba SIEMPRE el canal por ticket y
+        //    estas guías nunca consultaban a nadie.
         $isGuide = self::isGuide($doc);
+        $guideViaPse = $isGuide && !GreEmitRouting::shouldUseGreRestApi($doc, $empresa);
         if ($isGuide) {
-            $mode = 'sunat_gre';
+            $mode = $guideViaPse ? 'pse' : 'sunat_gre';
         }
 
         try {
-            if ($isGuide) {
+            if ($isGuide && !$guideViaPse) {
                 $consult = $this->consultGreTicket($empresa, $doc, $ruc);
             } else {
                 $consult = $mode === 'pse'
@@ -119,12 +124,15 @@ class FiscalCdrRecoveryService
 
         $cdrResponse = $consult['cdr_response'] ?? null;
         $cdrZip = $consult['cdr_zip'] ?? null;
+        // ¿Se llegó a preguntar al proveedor? (false = sin ticket / sin configuración / sin token).
+        // El ciclo automático lo usa para no dar por "consultada" una guía que nadie consultó.
+        $queried = (bool) ($consult['queried'] ?? true);
         // Respuesta CRUDA del proveedor (SUNAT/PSE) para mostrar exactamente qué respondió.
         $detail = (string) ($consult['provider_detail'] ?? ($consult['message'] ?? ''));
 
         // 1) CDR real → único camino que puede mover `status` (regla 2 de la sección 14).
         if ($cdrResponse instanceof CdrResponse && $cdrZip !== null && $cdrZip !== '') {
-            return $this->withDetail($this->applyRecoveredCdr($doc, $cdrZip, $cdrResponse), $detail);
+            return $this->withQueried($this->withDetail($this->applyRecoveredCdr($doc, $cdrZip, $cdrResponse), $detail), true);
         }
 
         // 2) Sin CDR real: NUNCA se cambia `status` automáticamente, sea cual sea el veredicto
@@ -137,7 +145,18 @@ class FiscalCdrRecoveryService
         $this->persistConsultDetail($doc, $mode, $consult, $verdict, $statusCode, $statusMessage);
 
         $msg = $this->describeUnresolved($verdict, $statusMessage, (string) ($consult['message'] ?? ''));
-        return $this->withDetail($this->result(false, false, false, $doc, $msg), $detail);
+        return $this->withQueried($this->withDetail($this->result(false, false, false, $doc, $msg), $detail), $queried);
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     * @return array<string, mixed>
+     */
+    private function withQueried(array $result, bool $queried): array
+    {
+        $result['queried'] = $queried;
+
+        return $result;
     }
 
     /**
@@ -515,6 +534,7 @@ class FiscalCdrRecoveryService
             'status_message' => '',
             'provider_detail' => $message,
             'message' => $message,
+            'queried' => false,
         ];
     }
 
@@ -531,27 +551,13 @@ class FiscalCdrRecoveryService
             return $this->consultNull('pse_base_url no configurada.');
         }
 
-        $filenameBase = CdrNormalizer::filenameBaseFromDocument($doc);
+        $filenameBase = CdrNormalizer::filenameBaseFromDocument($doc, $ruc);
         $prod = strtolower(trim((string) $doc->getSunatMode())) === 'production'
             || strtolower(trim($empresa->getAmbiente())) === 'produccion';
         $path = ($prod ? '/api/cpe/consultar/' : '/api/cpe/consultar-demo/') . rawurlencode($filenameBase);
         $endpoint = $this->buildEndpoint($baseUrl, $path);
 
-        $ch = curl_init($endpoint);
-        if ($ch === false) {
-            throw new \RuntimeException('curl_init failed');
-        }
-        curl_setopt_array($ch, [
-            CURLOPT_HTTPGET => true,
-            CURLOPT_HTTPHEADER => $this->buildPseHeaders($empresa),
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 45,
-        ]);
-        $body = curl_exec($ch);
-        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-
-        $bodyStr = $body === false ? '' : (string) $body;
+        [$httpCode, $bodyStr] = $this->pseHttpGet($endpoint, $this->buildPseHeaders($empresa));
         $rawBody = trim(mb_substr($bodyStr, 0, 600));
         $resp = json_decode($bodyStr, true);
         if (!is_array($resp)) {
@@ -634,6 +640,31 @@ class FiscalCdrRecoveryService
             'raw_response' => $resp,
             'message' => $pseMsg ?: ('PSE respondió (HTTP ' . $httpCode . ') sin CDR adjunto.'),
         ];
+    }
+
+    /**
+     * GET al PSE (costura para pruebas: no hay forma de simular curl sin red).
+     *
+     * @param string[] $headers
+     * @return array{0: int, 1: string} [http, body]
+     */
+    protected function pseHttpGet(string $endpoint, array $headers): array
+    {
+        $ch = curl_init($endpoint);
+        if ($ch === false) {
+            throw new \RuntimeException('curl_init failed');
+        }
+        curl_setopt_array($ch, [
+            CURLOPT_HTTPGET => true,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 45,
+        ]);
+        $body = curl_exec($ch);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        return [$httpCode, $body === false ? '' : (string) $body];
     }
 
     /**

@@ -143,7 +143,7 @@ class FiscalWorkerCommand extends Command
             switch ($queue) {
                 case FiscalQueueService::QUEUE_EMIT:
                     $output->writeln('<info>Emit ' . $uuid . '</info>');
-                    $this->emitProcessor->processByUuid($uuid);
+                    $this->emitProcessor->processByUuid($uuid, (bool) ($job['force'] ?? false));
                     break;
                 case FiscalQueueService::QUEUE_EMAIL:
                     $output->writeln('<info>Email ' . $uuid . '</info>');

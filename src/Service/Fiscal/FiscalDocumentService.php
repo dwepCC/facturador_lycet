@@ -88,6 +88,17 @@ class FiscalDocumentService
             if ($existing->getStatus() === FiscalDocument::STATUS_ACCEPTED && !$reissue) {
                 return $existing;
             }
+            // Guía ya enviada de verdad que espera veredicto (SENT, o cerrada en manual_only tras el envío):
+            // un nuevo POST del ERP (reintento/"reenviar") NO la reenvía ni pisa su snapshot — su resultado se
+            // obtiene consultando el CDR. Así se evita crear un envío nuevo (y ticket nuevo) por cada reintento.
+            if (!$reissue && FiscalEmitProcessor::isAwaitingVerdictGuide($existing)) {
+                $this->logger->info('fiscal_enqueue_guide_already_sent', [
+                    'uuid' => $existing->getDocumentUuid(),
+                    'status' => $existing->getStatus(),
+                ]);
+
+                return $existing;
+            }
             if (in_array($existing->getStatus(), [
                 FiscalDocument::STATUS_QUEUED,
                 FiscalDocument::STATUS_SENDING,
