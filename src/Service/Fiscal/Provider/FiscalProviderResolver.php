@@ -36,7 +36,7 @@ class FiscalProviderResolver
     ): FiscalEmitResult {
         $this->applyEmpresaMode($doc, $empresa);
 
-        if (GreEmitRouting::isProductionPse($doc, $empresa) && GreEmitRouting::isGreDocument($doc)) {
+        if (GreEmitRouting::isProductionPse($doc, $empresa) && GreEmitRouting::isGreDocument($doc) && !GreEmitRouting::isPseApp($doc, $empresa)) {
             return $this->emitViaProvider(ValidaPseProvider::class, $doc, $empresa, $documentClass, $greenterDoc);
         }
         if (GreEmitRouting::shouldUseGreRestApi($doc, $empresa)) {
@@ -55,7 +55,7 @@ class FiscalProviderResolver
     {
         $this->applyEmpresaMode($doc, $empresa);
 
-        if (GreEmitRouting::isProductionPse($doc, $empresa) && GreEmitRouting::isGreDocument($doc)) {
+        if (GreEmitRouting::isProductionPse($doc, $empresa) && GreEmitRouting::isGreDocument($doc) && !GreEmitRouting::isPseApp($doc, $empresa)) {
             return 'validapse';
         }
         if (GreEmitRouting::shouldUseGreRestApi($doc, $empresa)) {

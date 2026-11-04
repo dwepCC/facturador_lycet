@@ -218,6 +218,11 @@ class PseAppProvider extends AbstractFiscalProvider
 
                 return $out;
             default:
+                // Guías (09/31): el PSE responde SENT_TICKET_PENDING con el ticket de SUNAT mientras el CDR no
+                // está listo; se guarda para auditoría y el reintento (misma Idempotency-Key) lo reconcilia.
+                if (isset($resp['ticket']) && $resp['ticket'] !== '') {
+                    $out->ticket = (string) $resp['ticket'];
+                }
                 // 202, o cualquier status no terminal (SENDING/SENT_TICKET_PENDING/UNKNOWN):
                 // sigue procesándose del lado del PSE. El reintento con Idempotency-Key
                 // estable resuelve esto sin bloquear el worker.

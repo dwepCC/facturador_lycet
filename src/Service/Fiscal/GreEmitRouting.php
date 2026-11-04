@@ -6,12 +6,15 @@ namespace App\Service\Fiscal;
 
 use App\Entity\Empresa;
 use App\Entity\FiscalDocument;
+use App\Service\Fiscal\Provider\PseProviderRegistry;
 
 /**
  * Enrutamiento GRE 09/31 (REST 2022+):
  * - Pruebas: NubeFact (proxy) vía API REST.
  * - Producción + sunat_direct: SUNAT API producción.
  * - Producción + pse: PSE del tenant (no REST).
+ * - provider = pseapp (PSE propio, pse.tukifac.com), en CUALQUIER ambiente: el propio PSE envía la guía con sus
+ *   credenciales GRE (REST) y las del emisor no intervienen; tukifac solo le entrega el XML sin firmar.
  */
 final class GreEmitRouting
 {
@@ -58,11 +61,24 @@ final class GreEmitRouting
     }
 
     /**
+     * Empresa con send_mode = pse y proveedor 'pseapp' (nuestro PSE). Sus guías NO van a ValidaPSE ni al sandbox
+     * de NubeFact desde tukifac: las atiende PseAppProvider, igual que facturas y boletas.
+     */
+    public static function isPseApp(FiscalDocument $doc, Empresa $empresa): bool
+    {
+        return self::resolveSendMode($doc, $empresa) === 'pse'
+            && PseProviderRegistry::normalizeProvider((string) ($empresa->getProvider() ?? '')) === 'pseapp';
+    }
+
+    /**
      * GRE vía API REST (NubeFact en pruebas, SUNAT en producción con sunat_direct).
      */
     public static function shouldUseGreRestApi(FiscalDocument $doc, Empresa $empresa): bool
     {
         if (!self::isGreDocument($doc)) {
+            return false;
+        }
+        if (self::isPseApp($doc, $empresa)) {
             return false;
         }
         if (self::isProductionPse($doc, $empresa)) {
