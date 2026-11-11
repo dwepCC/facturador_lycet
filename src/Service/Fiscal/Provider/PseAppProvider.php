@@ -23,6 +23,10 @@ class PseAppProvider extends AbstractFiscalProvider
 {
     private const CONNECT_TIMEOUT = 8;
     private const TOTAL_TIMEOUT = 15;
+    // firmar-enviar espera la respuesta del PSE, que a su vez espera a SUNAT (hasta ~10 s de consulta previa + 20 s de envío).
+    // Si tukifac corta antes, el PSE sigue procesando y el reintento choca con IDEMPOTENCY_IN_PROGRESS o con un 1033.
+    // Debe ser MAYOR que el tiempo máximo del PSE. Ver docs/arquitectura/07 §4 (repo pse-app).
+    private const EMIT_TIMEOUT = 40;
 
     public function getName(): string
     {
@@ -130,7 +134,7 @@ class PseAppProvider extends AbstractFiscalProvider
             // que el reintento automático (Idempotency-Key estable) se encargue es mejor que
             // mantener la conexión abierta.
             CURLOPT_CONNECTTIMEOUT => self::CONNECT_TIMEOUT,
-            CURLOPT_TIMEOUT => self::TOTAL_TIMEOUT,
+            CURLOPT_TIMEOUT => self::EMIT_TIMEOUT,
         ]);
         $body = curl_exec($ch);
         $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
