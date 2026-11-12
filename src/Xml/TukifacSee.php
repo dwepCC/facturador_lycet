@@ -57,6 +57,6 @@ class TukifacSee extends See
 
     private static function usesTransporte(DocumentInterface $document): bool
     {
-        return $document instanceof Invoice && TukifacInvoiceBuilder::hasReservedAttributes($document);
+        return $document instanceof Invoice && TukifacInvoiceBuilder::needsPostProcess($document);
     }
 }

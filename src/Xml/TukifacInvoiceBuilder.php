@@ -26,8 +26,11 @@ class TukifacInvoiceBuilder extends InvoiceBuilder
     public function build(DocumentInterface $document): ?string
     {
         $xml = parent::build($document);
-        if ($xml === null || !$document instanceof Invoice || !self::hasReservedAttributes($document)) {
+        if ($xml === null || !$document instanceof Invoice || !self::needsPostProcess($document)) {
             return $xml;
+        }
+        if (self::isExportService($document)) {
+            $xml = self::stripIgvTaxSubtotal($xml);
         }
         if (self::hasExportCountry($document)) {
             $xml = self::injectExportCountry($xml);
@@ -37,6 +40,41 @@ class TukifacInvoiceBuilder extends InvoiceBuilder
         }
 
         return $xml;
+    }
+
+    /** ¿La factura necesita un ajuste del XML que Greenter no hace (atributos reservados o exportación de servicios)? */
+    public static function needsPostProcess(Invoice $invoice): bool
+    {
+        return self::hasReservedAttributes($invoice) || self::isExportService($invoice);
+    }
+
+    /** Exportación de servicios (catálogo 51: 0201–0208). */
+    public static function isExportService(Invoice $invoice): bool
+    {
+        return preg_match('/^020[1-8]$/', trim((string) $invoice->getTipoOperacion())) === 1;
+    }
+
+    /**
+     * Greenter siempre escribe el subtotal de IGV (tributo 1000) del total de impuestos cuando mtoOperGravadas no es nulo, aunque sea 0.
+     * En una exportación SUNAT lo rechaza (3107: código de tributo global inválido para el tipo de operación): solo debe ir 9995/EXP.
+     */
+    public static function stripIgvTaxSubtotal(string $xml): string
+    {
+        $dom = new DOMDocument('1.0', 'UTF-8');
+        $dom->preserveWhiteSpace = true;
+        $dom->formatOutput = false;
+        if (!$dom->loadXML($xml)) {
+            throw new \RuntimeException('XML de factura inválido al quitar el IGV de la exportación');
+        }
+        $xp = new DOMXPath($dom);
+        $xp->registerNamespace('cac', self::NS_CAC);
+        $xp->registerNamespace('cbc', self::NS_CBC);
+        foreach (iterator_to_array($xp->query('/*/cac:TaxTotal/cac:TaxSubtotal[cac:TaxCategory/cac:TaxScheme/cbc:ID="1000"]')) as $sub) {
+            $sub->parentNode->removeChild($sub);
+        }
+        $out = $dom->saveXML();
+
+        return $out === false ? $xml : $out;
     }
 
     /** ¿Trae atributos que Greenter no puede generar (detracción de transporte 1004 o país de uso de una exportación)? */

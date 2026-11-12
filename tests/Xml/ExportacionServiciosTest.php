@@ -85,9 +85,9 @@ class ExportacionServiciosTest extends TestCase
         $this->assertSame('-', $xp->evaluate('string(/*/cac:AccountingCustomerParty/cac:Party/cac:PartyIdentification/cbc:ID/@schemeID)'));
     }
 
-    public function testSinAtributoReservadoElXmlSaleIgualQueGreenter(): void
+    public function testSinAtributoReservadoNiExportacionElXmlSaleIgualQueGreenter(): void
     {
-        $inv = $this->invoice('0201', []);
+        $inv = $this->invoice('0101', []);
         $this->assertSame(
             (new InvoiceBuilder(['autoescape' => false]))->build($inv),
             (new TukifacInvoiceBuilder(['autoescape' => false]))->build($inv)
@@ -102,7 +102,7 @@ class ExportacionServiciosTest extends TestCase
             $mk('4001', 'País de residencia', 'CA'),
             (new DetailAttribute())->setCode('4002')->setName('Fecha de ingreso al país')->setFecInicio(new \DateTime('2026-11-01 12:00:00-05:00')),
             (new DetailAttribute())->setCode('4003')->setName('Fecha de Ingreso al Establecimiento')->setFecInicio(new \DateTime('2026-11-02 12:00:00-05:00')),
-            (new DetailAttribute())->setCode('4004')->setName('Fecha de Salida del Establecimiento')->setFecFin(new \DateTime('2026-11-05 12:00:00-05:00')),
+            (new DetailAttribute())->setCode('4004')->setName('Fecha de Salida del Establecimiento')->setFecInicio(new \DateTime('2026-11-05 12:00:00-05:00')),
             (new DetailAttribute())->setCode('4005')->setName('Número de Días de Permanencia')->setDuracion(3),
             $mk('4007', 'Nombres y apellidos del huesped', 'John Smith'),
             $mk('4009', 'Número de documento del huesped', 'X1234567'),
@@ -114,10 +114,34 @@ class ExportacionServiciosTest extends TestCase
         $this->assertSame(8, (int) $xp->evaluate("count({$p})"));
         $this->assertSame('US', $xp->evaluate("string({$p}[cbc:NameCode='4000']/cbc:Value)"));
         $this->assertSame('2026-11-01', $xp->evaluate("string({$p}[cbc:NameCode='4002']/cac:UsabilityPeriod/cbc:StartDate)"));
-        $this->assertSame('2026-11-05', $xp->evaluate("string({$p}[cbc:NameCode='4004']/cac:UsabilityPeriod/cbc:EndDate)"));
+        $this->assertSame('2026-11-05', $xp->evaluate("string({$p}[cbc:NameCode='4004']/cac:UsabilityPeriod/cbc:StartDate)"));
         $this->assertSame('3', $xp->evaluate("string({$p}[cbc:NameCode='4005']/cac:UsabilityPeriod/cbc:DurationMeasure)"));
         $this->assertSame('John Smith', $xp->evaluate("string({$p}[cbc:NameCode='4007']/cbc:Value)"));
         // Hospedaje no usa el nodo de país de uso.
         $this->assertSame(0, (int) $xp->evaluate('count(/*/cac:Delivery)'));
+    }
+
+    /** SUNAT beta (12-nov-2026): una exportación con subtotal de IGV (tributo 1000) se rechaza con 3107; debe llevar solo 9995/EXP. */
+    public function testExportacionNoLlevaElSubtotalDeIgv1000(): void
+    {
+        $inv = $this->invoice('0201', [])->setMtoOperGravadas(0.0)->setMtoIGV(0.0);
+        $this->assertTrue(TukifacInvoiceBuilder::needsPostProcess($inv));
+        $xml = (new TukifacInvoiceBuilder(['autoescape' => false]))->build($inv);
+        $xp = $this->xpath($xml);
+
+        $this->assertSame(0, (int) $xp->evaluate('count(/*/cac:TaxTotal/cac:TaxSubtotal[cac:TaxCategory/cac:TaxScheme/cbc:ID="1000"])'));
+        $this->assertSame(1, (int) $xp->evaluate('count(/*/cac:TaxTotal/cac:TaxSubtotal[cac:TaxCategory/cac:TaxScheme/cbc:ID="9995"])'));
+        $this->assertSame('0.00', $xp->evaluate('string(/*/cac:TaxTotal/cbc:TaxAmount)'));
+    }
+
+    /** Fuera de las exportaciones el XML no cambia: sin atributos reservados sale idéntico al de Greenter, con su IGV 1000. */
+    public function testVentaInternaNoSeToca(): void
+    {
+        $inv = $this->invoice('0101', [])->setMtoOperGravadas(0.0)->setMtoIGV(0.0);
+        $this->assertFalse(TukifacInvoiceBuilder::needsPostProcess($inv));
+        $this->assertSame(
+            (new InvoiceBuilder(['autoescape' => false]))->build($inv),
+            (new TukifacInvoiceBuilder(['autoescape' => false]))->build($inv)
+        );
     }
 }
