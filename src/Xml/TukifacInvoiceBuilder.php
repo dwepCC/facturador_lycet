@@ -29,11 +29,23 @@ class TukifacInvoiceBuilder extends InvoiceBuilder
         if ($xml === null || !$document instanceof Invoice || !self::hasReservedAttributes($document)) {
             return $xml;
         }
+        if (self::hasExportCountry($document)) {
+            $xml = self::injectExportCountry($xml);
+        }
+        if (self::hasTransporte1004($document)) {
+            $xml = self::injectDelivery($xml, (string) $document->getTipoMoneda());
+        }
 
-        return self::injectDelivery($xml, (string) $document->getTipoMoneda());
+        return $xml;
     }
 
+    /** ¿Trae atributos que Greenter no puede generar (detracción de transporte 1004 o país de uso de una exportación)? */
     public static function hasReservedAttributes(Invoice $invoice): bool
+    {
+        return self::hasTransporte1004($invoice) || self::hasExportCountry($invoice);
+    }
+
+    public static function hasTransporte1004(Invoice $invoice): bool
     {
         foreach ($invoice->getDetails() ?? [] as $detail) {
             foreach ($detail->getAtributos() ?? [] as $atr) {
@@ -44,6 +56,76 @@ class TukifacInvoiceBuilder extends InvoiceBuilder
         }
 
         return false;
+    }
+
+    public static function hasExportCountry(Invoice $invoice): bool
+    {
+        foreach ($invoice->getDetails() ?? [] as $detail) {
+            foreach ($detail->getAtributos() ?? [] as $atr) {
+                if ($atr->getCode() === ExportacionServicios::PAIS_USO) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Exportación de servicios 0201/0208: agrega /Invoice/cac:Delivery/cac:DeliveryLocation/cac:Address/cac:Country con el país de uso del
+     * servicio y quita el atributo reservado de los AdditionalItemProperty.
+     */
+    public static function injectExportCountry(string $xml): string
+    {
+        $dom = new DOMDocument('1.0', 'UTF-8');
+        $dom->preserveWhiteSpace = true;
+        $dom->formatOutput = false;
+        if (!$dom->loadXML($xml)) {
+            throw new \RuntimeException('XML de factura inválido al agregar el país de uso del servicio');
+        }
+        $xp = new DOMXPath($dom);
+        $xp->registerNamespace('cac', self::NS_CAC);
+        $xp->registerNamespace('cbc', self::NS_CBC);
+
+        $country = '';
+        foreach (iterator_to_array($xp->query('/*/cac:InvoiceLine/cac:Item/cac:AdditionalItemProperty')) as $prop) {
+            /** @var DOMElement $prop */
+            if (trim((string) $xp->evaluate('string(cbc:NameCode)', $prop)) !== ExportacionServicios::PAIS_USO) {
+                continue;
+            }
+            if ($country === '') {
+                $country = trim((string) $xp->evaluate('string(cbc:Value)', $prop));
+            }
+            $prop->parentNode->removeChild($prop);
+        }
+        if ($country === '' || $xp->query('/*/cac:Delivery')->length > 0) {
+            $out = $dom->saveXML();
+
+            return $out === false ? $xml : $out;
+        }
+
+        $cac = fn (string $n): DOMElement => $dom->createElementNS(self::NS_CAC, 'cac:' . $n);
+        $code = $dom->createElementNS(self::NS_CBC, 'cbc:IdentificationCode');
+        $code->setAttribute('listID', 'ISO 3166-1');
+        $code->setAttribute('listAgencyName', 'United Nations Economic Commission for Europe');
+        $code->setAttribute('listName', 'Country');
+        $code->appendChild($dom->createTextNode($country));
+        $countryEl = $cac('Country');
+        $countryEl->appendChild($code);
+        $address = $cac('Address');
+        $address->appendChild($countryEl);
+        $location = $cac('DeliveryLocation');
+        $location->appendChild($address);
+        $delivery = $cac('Delivery');
+        $delivery->appendChild($location);
+
+        // Orden UBL de /Invoice: ... SellerSupplierParty, Delivery, DeliveryTerms, PaymentMeans, PaymentTerms, ..., TaxTotal, LegalMonetaryTotal, InvoiceLine
+        $anchor = $xp->query('/*/cac:DeliveryTerms[1] | /*/cac:PaymentMeans[1] | /*/cac:PaymentTerms[1] | /*/cac:PrepaidPayment[1] | /*/cac:AllowanceCharge[1] | /*/cac:TaxTotal[1] | /*/cac:LegalMonetaryTotal[1] | /*/cac:InvoiceLine[1]')->item(0);
+        $dom->documentElement->insertBefore($delivery, $anchor);
+
+        $out = $dom->saveXML();
+
+        return $out === false ? $xml : $out;
     }
 
     public static function injectDelivery(string $xml, string $currency): string
