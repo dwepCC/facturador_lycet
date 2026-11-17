@@ -294,11 +294,23 @@
     // comprobantes antiguos siguen siendo de pruebas: SUNAT nunca los recibió en
     // el ambiente real. Cuando el documento se reemitió, se muestran los dos
     // ambientes para que el salto quede a la vista.
+    // Modo/proveedor del documento; si aún no se procesó, el configurado en la empresa marcado como previsto.
+    const SEND_MODE_LABEL={sunat_direct:'SUNAT directo', pse:'PSE'};
+    function modeCell(value, planned){
+      if(value) return escapeHtml(SEND_MODE_LABEL[value]||value);
+      if(planned) return `<span class="cell-sub" title="Aún no se envió: es lo configurado en la empresa">${escapeHtml(SEND_MODE_LABEL[planned]||planned)} (previsto)</span>`;
+      return '—';
+    }
+
     function docSunatModeText(d){
       const modeLabel={production:'Producción', beta:'Pruebas'};
       const current=String(d.sunat_mode||'').toLowerCase();
       const origin=String(d.original_sunat_mode||'').toLowerCase();
-      if(!current && !origin) return '<span class="cell-sub">Sin enviar</span>';
+      if(!current && !origin){
+        const planned=String(d.planned_sunat_mode||'').toLowerCase();
+        if(!planned) return '<span class="cell-sub">Sin enviar</span>';
+        return `<span class="badge ${planned==='production'?'badge-ok':'badge-warn'}" title="Aún no se envió: es el ambiente configurado en la empresa">${escapeHtml(modeLabel[planned]||planned)}</span> <span class="cell-sub">previsto</span>`;
+      }
 
       const currentText=modeLabel[current]||current||'—';
       if(origin && current && origin!==current){
@@ -419,8 +431,8 @@
             ${d.sunat_code?`<div class="cell-sub cell-sub--err" title="${escapeHtml(d.sunat_message||'')}">SUNAT ${escapeHtml(d.sunat_code)}</div>`:''}
           </td>
           <td>${attentionCell(d)}</td>
-          <td>${d.send_mode||'—'}</td>
-          <td>${d.provider||'—'}</td>
+          <td>${modeCell(d.send_mode,d.planned_send_mode)}</td>
+          <td>${modeCell(d.provider,d.planned_provider)}</td>
           <td><button class="btn btn-indigo btn-xs" type="button" data-open="${d.document_uuid}">Ver detalle</button></td>
         </tr>`;
       }).join('');

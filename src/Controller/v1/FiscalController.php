@@ -936,6 +936,12 @@ class FiscalController extends AbstractController
             'provider' => $doc->getProvider(),
             'sunat_mode' => $doc->getSunatMode(),
             'original_sunat_mode' => $doc->getOriginalSunatMode(),
+            // Lo que corresponde según la configuración de la empresa. Mientras el comprobante espera en cola
+            // todavía no tiene modo, proveedor ni ambiente (se fijan al procesarlo): la lista muestra estos
+            // valores como «previsto» para que no aparezca vacío.
+            'planned_send_mode' => $empresa?->getSendMode(),
+            'planned_provider' => $empresa?->getProvider(),
+            'planned_sunat_mode' => $empresa === null ? null : (strtolower(trim($empresa->getAmbiente())) === 'produccion' ? 'production' : 'beta'),
             'reissue_count' => $doc->getReissueCount(),
             'sunat_code' => $doc->getSunatCode(),
             'sunat_message' => $doc->getSunatMessage(),
