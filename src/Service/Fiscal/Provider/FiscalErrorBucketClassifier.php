@@ -113,6 +113,53 @@ final class FiscalErrorBucketClassifier
         return self::BUCKET_MANUAL_ONLY;
     }
 
+    /**
+     * Fragmentos (sin acentos, en minúsculas) de mensajes que indican que SUNAT, el proveedor (PSE) o la red NO están
+     * disponibles — es decir, una caída y no un veredicto sobre el comprobante. Mantener alineada con
+     * billingstate.IsSunatUnavailable del backend (pkg/billingstate/fiscal_map.go).
+     */
+    private const SUNAT_UNAVAILABLE_NEEDLES = [
+        'bad gateway',
+        'service unavailable',
+        'gateway timeout',
+        'could not connect',
+        'could not resolve host',
+        'error fetching http headers',
+        'connection refused',
+        'connection reset',
+        'connection timed out',
+        'timed out',
+        'servicio no esta disponible',
+        'servicio de autenticacion no esta disponible',
+        'no puede responder su solicitud',
+        'temporarily unavailable',
+        'sunat no responde',
+    ];
+
+    /**
+     * ¿El fallo es una caída de SUNAT/PSE/red? Son los códigos de excepción de sistema de SUNAT 0100 y 0109 o un mensaje
+     * de indisponibilidad. Estos fallos se reintentan por mucho más tiempo que los demás transitorios: el comprobante no
+     * tiene nada malo, solo hay que esperar a que SUNAT vuelva.
+     */
+    public static function isSunatUnavailable(?string $code, ?string $message = null): bool
+    {
+        $code = $code !== null ? strtoupper(trim($code)) : '';
+        if ($code === '0100' || $code === '0109') {
+            return true;
+        }
+        $m = self::normalize((string) $message);
+        if ($m === '') {
+            return false;
+        }
+        foreach (self::SUNAT_UNAVAILABLE_NEEDLES as $needle) {
+            if (str_contains($m, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static function normalize(string $value): string
     {
         $value = mb_strtolower(trim($value), 'UTF-8');

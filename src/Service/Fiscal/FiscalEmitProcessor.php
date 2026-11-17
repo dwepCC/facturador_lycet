@@ -11,6 +11,7 @@ use App\Exception\EmpresaNoRegistradaException;
 use App\Repository\EmpresaRepository;
 use App\Repository\FiscalDocumentRepository;
 use App\Service\Fiscal\Provider\FiscalEmitResult;
+use App\Service\Fiscal\Provider\FiscalErrorBucketClassifier;
 use App\Service\Fiscal\Provider\FiscalProviderResolver;
 use App\Service\Fiscal\Provider\PseResponseFormatter;
 use App\Service\Fiscal\Observability\FiscalAuditService;
@@ -792,6 +793,18 @@ class FiscalEmitProcessor
     }
 
     /**
+     * Tope de reintentos cuando la causa es una CAÍDA de SUNAT/PSE/red (no un problema del comprobante). Con la espera
+     * máxima de 1 h entre intentos, 48 cubre unos dos días de caída antes de pasar a reenvío manual. Configurable con
+     * FISCAL_OUTAGE_MAX_RETRIES.
+     */
+    private function maxOutageRetries(): int
+    {
+        $v = (int) (getenv('FISCAL_OUTAGE_MAX_RETRIES') ?: ($_ENV['FISCAL_OUTAGE_MAX_RETRIES'] ?? 0));
+
+        return $v > 0 ? $v : 48;
+    }
+
+    /**
      * Aplica una falla NO terminal (transitoria o permanente):
      *  - Fija error_type y retry_count.
      *  - Si es transitoria y hay cupo de intentos (retry_count < maxRetries(), 5 por
@@ -819,7 +832,10 @@ class FiscalEmitProcessor
 
         $permanent = ($errorType === FiscalDocument::ERROR_PERMANENT);
         $retryEnabled = $empresa !== null && $empresa->isRetryEnabled();
-        $withinFastRetries = $doc->getRetryCount() < $this->maxRetries();
+        // Una caída de SUNAT no es culpa del comprobante: se sigue reintentando mucho más tiempo (hasta que SUNAT vuelva).
+        $sunatDown = $errorType === FiscalDocument::ERROR_TRANSIENT
+            && FiscalErrorBucketClassifier::isSunatUnavailable($doc->getSunatCode(), $message ?? $doc->getSunatMessage());
+        $withinFastRetries = $doc->getRetryCount() < ($sunatDown ? $this->maxOutageRetries() : $this->maxRetries());
 
         if (!$permanent && $retryEnabled && $withinFastRetries) {
             $delay = min(3600, 30 * (2 ** max(0, $doc->getRetryCount() - 1)));

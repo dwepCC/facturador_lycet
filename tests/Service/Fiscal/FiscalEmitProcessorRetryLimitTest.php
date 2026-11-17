@@ -167,4 +167,42 @@ class FiscalEmitProcessorRetryLimitTest extends TestCase
 
         self::assertFalse($matchesOrphanRepairQuery, 'un documento agotado nunca debe volver a calzar con la condición que usa el barrido de huérfanos');
     }
+
+    /**
+     * Una CAÍDA de SUNAT no agota los 5 intentos: el comprobante no tiene nada malo, se sigue reintentando (con espera
+     * de hasta 1 h) hasta que SUNAT vuelva. Si no, el documento quedaba en error a los ~15 minutos y el tenant lo veía mal.
+     */
+    public function testSunatOutageKeepsRetryingBeyondFiveAttempts(): void
+    {
+        $doc = new FiscalDocument();
+        $doc->setDocumentUuid('66666666-6666-6666-6666-666666666666');
+        $empresa = (new Empresa())->setRetryEnabled(true);
+
+        $queue = $this->createMock(FiscalQueueService::class);
+        $queue->expects(self::exactly(10))->method('scheduleRetry');
+
+        $processor = new FiscalEmitProcessor(
+            $this->createMock(EntityManagerInterface::class),
+            $this->createMock(FiscalDocumentRepository::class),
+            $this->createMock(EmpresaRepository::class),
+            $this->createMock(SerializerInterface::class),
+            $this->createMock(FiscalStorageService::class),
+            $this->createMock(FiscalWebhookService::class),
+            $queue,
+            $this->createMock(FiscalProviderResolver::class),
+            $this->createMock(FiscalPdfService::class),
+            $this->createMock(LoggerInterface::class)
+        );
+        $ref = new ReflectionMethod(FiscalEmitProcessor::class, 'applyFailure');
+        $ref->setAccessible(true);
+
+        for ($attempt = 1; $attempt <= 10; $attempt++) {
+            $ref->invoke($processor, $doc, $empresa, FiscalDocument::ERROR_TRANSIENT, 'Bad Gateway', $attempt, microtime(true));
+        }
+
+        self::assertSame(10, $doc->getRetryCount());
+        self::assertSame(FiscalDocument::STATUS_RETRYING, $doc->getStatus(), 'con SUNAT caído sigue reintentando después de 5 intentos');
+        self::assertTrue($doc->isRetryable());
+        self::assertNotNull($doc->getNextRetryAt());
+    }
 }

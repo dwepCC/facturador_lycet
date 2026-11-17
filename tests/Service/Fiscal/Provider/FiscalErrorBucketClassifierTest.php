@@ -128,4 +128,22 @@ class FiscalErrorBucketClassifierTest extends TestCase
     {
         self::assertSame(FiscalErrorBucketClassifier::BUCKET_TRANSIENT, FiscalErrorBucketClassifier::classify(null, null));
     }
+
+    public function testSunatUnavailableDetectsOutagesButNotBusinessRejections(): void
+    {
+        // Caídas de SUNAT / PSE / red (evidencia real de producción).
+        self::assertTrue(FiscalErrorBucketClassifier::isSunatUnavailable('0109', 'El servicio de autenticación no está disponible'));
+        self::assertTrue(FiscalErrorBucketClassifier::isSunatUnavailable('0100', null));
+        self::assertTrue(FiscalErrorBucketClassifier::isSunatUnavailable('HTTP', 'Bad Gateway'));
+        self::assertTrue(FiscalErrorBucketClassifier::isSunatUnavailable(null, 'Could not connect to host'));
+        self::assertTrue(FiscalErrorBucketClassifier::isSunatUnavailable(null, 'cURL error 28: Operation timed out after 30001 milliseconds'));
+        self::assertTrue(FiscalErrorBucketClassifier::isSunatUnavailable('', 'Error Fetching http headers'));
+
+        // Rechazos reales o problemas propios: NO son caída.
+        self::assertFalse(FiscalErrorBucketClassifier::isSunatUnavailable('2017', 'El numero de documento de identidad del receptor debe ser RUC'));
+        self::assertFalse(FiscalErrorBucketClassifier::isSunatUnavailable('1032', 'ya esta informado y se encuentra con estado anulado o rechazado'));
+        self::assertFalse(FiscalErrorBucketClassifier::isSunatUnavailable('0111', 'No tiene el perfil para enviar comprobantes electronicos'));
+        self::assertFalse(FiscalErrorBucketClassifier::isSunatUnavailable('HTTP', 'Bad Request'));
+        self::assertFalse(FiscalErrorBucketClassifier::isSunatUnavailable(null, null));
+    }
 }
