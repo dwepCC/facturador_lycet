@@ -267,7 +267,8 @@ class FiscalDocument
     public function getTicket(): ?string { return $this->ticket; }
     public function setTicket(?string $v): self { $this->ticket = $v; return $this; }
     public function getSunatCode(): ?string { return $this->sunatCode; }
-    public function setSunatCode(?string $v): self { $this->sunatCode = $v; return $this; }
+    /** La columna mide 20: un código más largo (p. ej. un código de error del PSE) rompía el INSERT y tumbaba el worker. */
+    public function setSunatCode(?string $v): self { $this->sunatCode = $v === null ? null : mb_substr($v, 0, 20); return $this; }
     public function getSunatMessage(): ?string { return $this->sunatMessage; }
     public function setSunatMessage(?string $v): self { $this->sunatMessage = $v; return $this; }
     public function getRetryCount(): int { return $this->retryCount; }
