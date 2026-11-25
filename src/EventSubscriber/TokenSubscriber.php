@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\EventSubscriber;
 
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
+use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpKernel\Event\RequestEvent;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\KernelEvents;
@@ -38,6 +39,8 @@ class TokenSubscriber implements EventSubscriberInterface
 
         // Dashboard autenticado: API fiscal vía cookie de sesión (sin token en URL).
         if (strpos($path, '/api/v1/fiscal') === 0 && $this->security->isGranted('ROLE_ADMIN')) {
+            $this->releaseSessionLock($event->getRequest());
+
             return;
         }
 
@@ -45,6 +48,20 @@ class TokenSubscriber implements EventSubscriberInterface
         $token = $event->getRequest()->query->get('token');
         if ($token !== $this->token) {
             throw new AccessDeniedHttpException('This action needs a valid token!');
+        }
+    }
+
+    /**
+     * PHP bloquea el archivo de sesión mientras la petición lo tiene abierto, y las demás peticiones
+     * del mismo usuario esperan en fila: una consulta lenta frenaba todo el panel. Ya autenticado, una
+     * consulta no vuelve a necesitar la sesión, así que se cierra antes de ejecutarla.
+     *
+     * Solo en GET/HEAD: las acciones (reenviar, consultar CDR...) siguen yendo de una en una por usuario.
+     */
+    private function releaseSessionLock(Request $request): void
+    {
+        if ($request->isMethodSafe() && $request->hasSession()) {
+            $request->getSession()->save();
         }
     }
 
