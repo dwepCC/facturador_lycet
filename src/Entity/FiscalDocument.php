@@ -56,6 +56,15 @@ class FiscalDocument
     /** @ORM\Column(type="integer") */
     private int $saleId;
 
+    /**
+     * RUC del emisor, copiado del snapshot para poder filtrar por columna indexada (buscarlo dentro
+     * del JSON obligaba a leer cada documento). NULL = documento anterior a la columna, todavía sin
+     * rellenar (app:fiscal:backfill-company-ruc); '' = revisado y sin RUC identificable.
+     *
+     * @ORM\Column(type="string", length=11, nullable=true)
+     */
+    private ?string $companyRuc = null;
+
     /** @ORM\Column(type="string", length=10) */
     private string $documentType;
 
@@ -282,7 +291,41 @@ class FiscalDocument
     public function getEmailStatus(): ?string { return $this->emailStatus; }
     public function setEmailStatus(?string $v): self { $this->emailStatus = $v; return $this; }
     public function getSnapshotJson(): string { return $this->snapshotJson; }
-    public function setSnapshotJson(string $v): self { $this->snapshotJson = $v; return $this; }
+    public function setSnapshotJson(string $v): self
+    {
+        $this->snapshotJson = $v;
+        $ruc = self::companyRucFromSnapshot($v);
+        if ($ruc !== null) {
+            $this->companyRuc = $ruc;
+        }
+
+        return $this;
+    }
+    public function getCompanyRuc(): ?string { return $this->companyRuc; }
+    public function setCompanyRuc(?string $v): self { $this->companyRuc = self::normalizeRuc($v); return $this; }
+
+    /** RUC del emisor según el snapshot (misma precedencia que muestra la lista), o null si no lo trae. */
+    public static function companyRucFromSnapshot(string $snapshotJson): ?string
+    {
+        $snapshot = json_decode($snapshotJson, true);
+        if (!is_array($snapshot)) {
+            return null;
+        }
+
+        return self::normalizeRuc($snapshot['company_ruc'] ?? null)
+            ?? self::normalizeRuc($snapshot['company']['ruc'] ?? null);
+    }
+
+    /** @param mixed $v */
+    private static function normalizeRuc($v): ?string
+    {
+        if (!is_string($v) && !is_int($v)) {
+            return null;
+        }
+        $ruc = trim((string) $v);
+
+        return preg_match('/^\d{11}$/', $ruc) === 1 ? $ruc : null;
+    }
     public function getFiscalFingerprint(): ?string { return $this->fiscalFingerprint; }
     public function setFiscalFingerprint(?string $v): self { $this->fiscalFingerprint = $v; return $this; }
     public function getProvider(): ?string { return $this->provider; }

@@ -148,6 +148,9 @@ class FiscalDocumentService
         $doc->setSeries($series);
         $doc->setNumber($number);
         $doc->setSnapshotJson($snapshotJson);
+        if ($doc->getCompanyRuc() === null) {
+            $doc->setCompanyRuc($ruc);
+        }
         $doc->setSnapshotVersion(self::SNAPSHOT_VERSION);
         $doc->setSchemaVersion(self::SCHEMA_VERSION);
         $doc->setGreenterVersion(self::GREENTER_VERSION);

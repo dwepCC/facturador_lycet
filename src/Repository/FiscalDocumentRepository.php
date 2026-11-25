@@ -416,7 +416,10 @@ class FiscalDocumentRepository extends ServiceEntityRepository
         if (!empty($filters['company_ruc'])) {
             $ruc = preg_replace('/\D/', '', (string) $filters['company_ruc']);
             if ($ruc !== '') {
-                $qb->andWhere('(d.snapshotJson LIKE :ruc1 OR d.snapshotJson LIKE :ruc2)')
+                // Por la columna indexada. El LIKE solo alcanza a los documentos aún sin rellenar
+                // (company_ruc NULL), para que ninguno desaparezca antes de terminar el backfill.
+                $qb->andWhere('(d.companyRuc = :ruc OR (d.companyRuc IS NULL AND (d.snapshotJson LIKE :ruc1 OR d.snapshotJson LIKE :ruc2)))')
+                    ->setParameter('ruc', $ruc)
                     ->setParameter('ruc1', '%"company_ruc":"' . $ruc . '"%')
                     ->setParameter('ruc2', '%"ruc":"' . $ruc . '"%');
             }
