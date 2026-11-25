@@ -394,9 +394,30 @@
       };
     }
 
-    async function loadStats(){
+    // Las consultas pueden terminar en otro orden que en el que se pidieron: solo pinta la última.
+    let statsSeq=0, listSeq=0;
+    let pendingLoads=0;
+
+    async function trackLoad(run){
+      pendingLoads++;
+      try{ await run(); } finally{ pendingLoads--; }
+    }
+
+    function loadStats(){ return trackLoad(fetchStats); }
+    function loadList(){ return trackLoad(fetchList); }
+
+    // El refresco automático no se suma a una carga que sigue en curso ni corre con el detalle abierto.
+    function autoRefresh(){
+      if(document.hidden||pendingLoads>0||qs('detailModal').style.display!=='none')return;
+      loadStats();
+      loadList();
+    }
+
+    async function fetchStats(){
+      const seq=++statsSeq;
       const f=currentFilters();
       const s=await apiFetch(url('/stats',{from:f.from,to:f.to,company_ruc:f.company_ruc,exclude_demo:f.exclude_demo})).then(r=>r.json());
+      if(seq!==statsSeq)return;
       const items=[
         ['Total',s.total,'indigo'],['Pendientes',s.pending,'amber'],['Cola',s.in_queue,'sky'],
         ['Procesando',s.processing,'violet'],['Aceptados',s.accepted,'emerald'],
@@ -405,10 +426,12 @@
       qs('kpis').innerHTML=items.map(([l,n,c])=>`<div class="kpi kpi-${c}"><div class="kpi-val">${n??0}</div><div class="kpi-lbl">${l}</div></div>`).join('');
     }
 
-    async function loadList(){
+    async function fetchList(){
+      const seq=++listSeq;
       const f=currentFilters();
       const p=Object.assign({},f,{offset:pageState.offset,limit:pageState.limit,include_total:true});
       const data=await apiFetch(url('/documents',p)).then(r=>r.json());
+      if(seq!==listSeq)return;
       pageState.total=Number(data.total||0);
 
       qs('rows').innerHTML=(data.items||[]).map(d=>{
@@ -860,7 +883,7 @@
     setDefaultDateRange();
     loadStats();
     loadList();
-    setInterval(()=>{if(!document.hidden){loadStats();loadList();}},30000);
+    setInterval(autoRefresh,30000);
   </script>
 </body>
 </html>
